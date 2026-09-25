@@ -27,8 +27,10 @@ int64_t CSubSwipe::swipeDistance(int64_t native) const {
 }
 
 void CSubSwipe::computeTargets() {
-    m_idLeft  = WORKSPACE_INVALID;
-    m_idRight = WORKSPACE_INVALID;
+    m_idLeft      = WORKSPACE_INVALID;
+    m_idRight     = WORKSPACE_INVALID;
+    m_createLeft  = false;
+    m_createRight = false;
 
     const auto POS = posOf(m_workspaceBegin);
     if (!POS)
@@ -36,7 +38,13 @@ void CSubSwipe::computeTargets() {
 
     const auto MON  = m_monitor.lock();
     const auto MAP  = layout(MON);
-    const bool WRAP = Cfg::swipeWrap();
+    const auto EDGE = m_axis == AXIS_SUB ? Cfg::subEdge() : Cfg::groupEdge();
+
+    // never create from an empty workspace: that would only chain empty ones
+    const bool CANCREATE = EDGE == Cfg::EDGE_CREATE && m_workspaceBegin->getWindowCount() > 0;
+
+    WORKSPACEID prev = WORKSPACE_INVALID, next = WORKSPACE_INVALID;
+    bool        createNext = false;
 
     if (m_axis == AXIS_SUB) {
         const auto IT = MAP.find(POS->group);
@@ -45,52 +53,80 @@ void CSubSwipe::computeTargets() {
 
         const auto& SUBS = IT->second;
         const auto  HERE = std::ranges::find(SUBS, POS->sub);
-        if (HERE == SUBS.end() || SUBS.size() < 2)
+        if (HERE == SUBS.end())
             return;
 
         if (HERE != SUBS.begin())
-            m_idLeft = encode(POS->group, *std::prev(HERE));
-        else if (WRAP)
-            m_idLeft = encode(POS->group, SUBS.back());
+            prev = encode(POS->group, *std::prev(HERE));
+        else if (EDGE == Cfg::EDGE_WRAP && SUBS.size() > 1)
+            prev = encode(POS->group, SUBS.back());
 
         if (std::next(HERE) != SUBS.end())
-            m_idRight = encode(POS->group, *std::next(HERE));
-        else if (WRAP)
-            m_idRight = encode(POS->group, SUBS.front());
+            next = encode(POS->group, *std::next(HERE));
+        else if (EDGE == Cfg::EDGE_WRAP && SUBS.size() > 1)
+            next = encode(POS->group, SUBS.front());
+        else if (CANCREATE) {
+            next       = encode(POS->group, SUBS.back() + 1);
+            createNext = true;
+        }
+    } else {
+        std::vector<int> groups;
+        for (const auto& [g, _] : MAP) {
+            if (g != POS->group && groupHasWindows(g, MON))
+                groups.push_back(g);
+        }
 
-        // "left" is drawn above, "right" below
-        if (Cfg::subsAbove())
-            std::swap(m_idLeft, m_idRight);
+        const auto         ABOVE = std::ranges::upper_bound(groups, POS->group);
 
-        return;
+        std::optional<int> left, right;
+        if (ABOVE != groups.begin())
+            left = *std::prev(ABOVE);
+        else if (EDGE == Cfg::EDGE_WRAP && !groups.empty())
+            left = groups.back();
+
+        if (ABOVE != groups.end())
+            right = *ABOVE;
+        else if (EDGE == Cfg::EDGE_WRAP && !groups.empty())
+            right = groups.front();
+
+        if (left)
+            prev = encode(*left, g_state.entrySub(*left, m_rowMode, MAP));
+        if (right)
+            next = encode(*right, g_state.entrySub(*right, m_rowMode, MAP));
+        else if (CANCREATE) {
+            // lowest unused group after this one, entered on sub 1 (or the current row in row mode)
+            for (int g = POS->group + 1; g <= MAX_GROUP; ++g) {
+                if (!MAP.contains(g)) {
+                    next       = encode(g, m_rowMode ? g_state.m_row : 1);
+                    createNext = true;
+                    break;
+                }
+            }
+        }
     }
 
-    std::vector<int> groups;
-    for (const auto& [g, _] : MAP) {
-        if (g != POS->group && groupHasWindows(g, MON))
-            groups.push_back(g);
+    // "left" is drawn left / above, "right" right / below
+    if (m_axis == AXIS_SUB && Cfg::subsAbove()) {
+        m_idLeft     = next;
+        m_idRight    = prev;
+        m_createLeft = createNext;
+    } else {
+        m_idLeft      = prev;
+        m_idRight     = next;
+        m_createRight = createNext;
     }
+}
 
-    if (groups.empty())
-        return;
+// target doesn't exist yet (it's created on release): only the current workspace moves
+void CSubSwipe::slideBeginOnly(double swipeDistance, double xDistance, double yDistance) {
+    g_pHyprRenderer->damageMonitor(m_monitor.lock());
 
-    const auto ABOVE = std::ranges::upper_bound(groups, POS->group);
+    if (m_axis == AXIS_SUB)
+        m_workspaceBegin->m_renderOffset->setValueAndWarp(Vector2D(0.0, ((-m_delta) / swipeDistance) * yDistance));
+    else
+        m_workspaceBegin->m_renderOffset->setValueAndWarp(Vector2D(((-m_delta) / swipeDistance) * xDistance, 0.0));
 
-    std::optional<int> left, right;
-    if (ABOVE != groups.begin())
-        left = *std::prev(ABOVE);
-    else if (WRAP)
-        left = groups.back();
-
-    if (ABOVE != groups.end())
-        right = *ABOVE;
-    else if (WRAP)
-        right = groups.front();
-
-    if (left)
-        m_idLeft = encode(*left, g_state.entrySub(*left, m_rowMode, MAP));
-    if (right)
-        m_idRight = encode(*right, g_state.entrySub(*right, m_rowMode, MAP));
+    m_workspaceBegin->updateWindowDecos();
 }
 
 bool CSubSwipe::begin(eAxis axis, bool rowMode) {
@@ -183,7 +219,10 @@ void CSubSwipe::update(double delta) {
         const auto PWORKSPACE = State::workspaceState()->query().id(workspaceIDLeft).run();
 
         if (!PWORKSPACE) {
-            m_delta = 0;
+            if (m_createLeft)
+                slideBeginOnly(SWIPEDISTANCE, XDISTANCE, YDISTANCE);
+            else
+                m_delta = 0;
             return;
         }
 
@@ -212,7 +251,10 @@ void CSubSwipe::update(double delta) {
         const auto PWORKSPACE = State::workspaceState()->query().id(workspaceIDRight).run();
 
         if (!PWORKSPACE) {
-            m_delta = 0;
+            if (m_createRight)
+                slideBeginOnly(SWIPEDISTANCE, XDISTANCE, YDISTANCE);
+            else
+                m_delta = 0;
             return;
         }
 
@@ -278,7 +320,7 @@ void CSubSwipe::end() {
     PHLWORKSPACE pSwitchedTo = nullptr;
 
     const bool   REVERT = (abs(m_delta) < SWIPEDISTANCE * *PSWIPEPERC && (*PSWIPEFORC == 0 || (*PSWIPEFORC != 0 && m_avgSpeed < *PSWIPEFORC))) || abs(m_delta) < 2 ||
-        (m_delta < 0 && !PWORKSPACEL) || (m_delta > 0 && !PWORKSPACER);
+        (m_delta < 0 && !PWORKSPACEL && !m_createLeft) || (m_delta > 0 && !PWORKSPACER && !m_createRight);
 
     if (REVERT) {
         // revert
@@ -311,8 +353,14 @@ void CSubSwipe::end() {
 
         pSwitchedTo = m_workspaceBegin;
     } else {
-        const bool TOLEFT       = m_delta < 0;
-        const auto PTARGET      = TOLEFT ? PWORKSPACEL : PWORKSPACER;
+        const bool TOLEFT  = m_delta < 0;
+        auto       PTARGET = TOLEFT ? PWORKSPACEL : PWORKSPACER;
+
+        if (!PTARGET) {
+            PTARGET = State::workspaceState()->create(TOLEFT ? workspaceIDLeft : workspaceIDRight, m_monitor->m_id);
+            (TOLEFT ? PWORKSPACEL : PWORKSPACER) = PTARGET;
+        }
+
         const auto RENDEROFFSET = PTARGET->m_renderOffset->value();
 
         // a row-mode group swipe keeps the remembered row

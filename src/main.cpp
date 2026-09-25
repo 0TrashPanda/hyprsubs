@@ -423,7 +423,15 @@ static void scheduleChanged() {
 void Cfg::registerValues(HANDLE handle) {
     rowMode        = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:row_mode", "row mode toggle state at startup", false);
     rowMode3Finger = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:row_mode_3finger", "3-finger horizontal swipe uses row mode while the toggle is on", false);
-    wrap           = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:swipe_wrap", "trackpad wraps past the first / last group and sub", false);
+    const auto EDGEVALIDATOR = [](const std::string& v) -> std::expected<void, std::string> {
+        if (v == "stop" || v == "wrap" || v == "create")
+            return {};
+        return std::unexpected("expected stop, wrap or create");
+    };
+    groupEdgeValue = makeShared<Config::Values::CStringValue>("plugin:hyprsubs:swipe_group_edge", "swipe past the first / last group: stop, wrap or create", "create",
+                                                              Config::Values::SStringValueOptions{.validator = EDGEVALIDATOR});
+    subEdgeValue   = makeShared<Config::Values::CStringValue>("plugin:hyprsubs:swipe_sub_edge", "swipe past the first / last sub: stop, wrap or create", "stop",
+                                                              Config::Values::SStringValueOptions{.validator = EDGEVALIDATOR});
     above          = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:subs_above", "higher subs sit above the current one instead of below", false);
     verticalDistance = makeShared<Config::Values::CIntValue>("plugin:hyprsubs:vertical_swipe_distance",
                                                              "swipe distance for vertical (sub) swipes, 0 = gestures:workspace_swipe_distance", 0,
@@ -431,7 +439,8 @@ void Cfg::registerValues(HANDLE handle) {
 
     HyprlandAPI::addConfigValueV2(handle, rowMode);
     HyprlandAPI::addConfigValueV2(handle, rowMode3Finger);
-    HyprlandAPI::addConfigValueV2(handle, wrap);
+    HyprlandAPI::addConfigValueV2(handle, groupEdgeValue);
+    HyprlandAPI::addConfigValueV2(handle, subEdgeValue);
     HyprlandAPI::addConfigValueV2(handle, above);
     HyprlandAPI::addConfigValueV2(handle, verticalDistance);
 }

@@ -77,7 +77,7 @@ All actions below are exposed as dispatchers (see [Dispatchers](#dispatchers)); 
 
 Rules:
 
-- Only the `CTRL` binds create subs. Navigation never creates subs.
+- Only the `CTRL` binds create subs from the keyboard. Keyboard navigation never creates subs (trackpad swipes can, see [Swiping past the end](#swiping-past-the-end)).
 - New subs fill the **lowest free sub number** in group N (with 2.1 and 2.3, the new sub is 2.2). If group N has no subs, the new sub is `N.1`. In [row mode](#row-mode), the current row is used instead if that slot is free.
 - Entering a group that has no existing subs (via `SUPER + N`) goes to `N.1`.
 - Keyboard-triggered switches animate on the matching axis: group changes slide horizontally, sub changes slide vertically.
@@ -94,13 +94,13 @@ Handled natively by Hyprland: the first ~5px of movement decides horizontal or v
 
 - Target: the next / previous group **that has at least one window**. Empty groups are skipped, like the native swipe.
 - Lands on that group's last-used sub (or the same sub index in [row mode](#row-mode)).
-- Past the first / last group: wraps around if `swipe_wrap = true`, otherwise rubber-bands and snaps back.
+- Past the first / last group: see [Swiping past the end](#swiping-past-the-end) (`swipe_group_edge`, default `create`).
 
 ### Vertical: switch sub
 
 - Target: the next / previous **existing** sub in the current group (gaps are skipped).
 - Natural direction: fingers up → next sub comes in from below. Fingers down → previous sub comes in from above. With `subs_above = true` this flips: higher subs sit above, so fingers down brings in the next sub.
-- Past the first / last sub: wraps around if `swipe_wrap = true`, otherwise rubber-bands and snaps back.
+- Past the first / last sub: see [Swiping past the end](#swiping-past-the-end) (`swipe_sub_edge`, default `stop`).
 
 ### Tracking and release
 
@@ -110,6 +110,23 @@ All native behavior, reused as-is:
 - Commit vs snap-back is decided by `gestures:workspace_swipe_cancel_ratio` (distance) and `gestures:workspace_swipe_min_speed_to_force` (flick speed).
 - The finish animation (commit or snap-back) stays on the swipe axis.
 - On a wrap, the target slides in from the side you are swiping toward. It never animates backwards across the skipped workspaces.
+
+### Swiping past the end
+
+`swipe_group_edge` (horizontal) and `swipe_sub_edge` (vertical) each take one of:
+
+| Value | Past the last group / sub | Past the first |
+|---|---|---|
+| `stop` | Rubber-bands and snaps back | Same |
+| `wrap` | Wraps to the first | Wraps to the last |
+| `create` | Creates a new one and lands on it | Rubber-bands |
+
+With `create`:
+
+- **Group:** the new group is the lowest unused group number after the current one. You land on its sub 1, or on the current row in row mode.
+- **Sub:** the new sub is the last sub + 1, in the "next" direction (below, or above with `subs_above`).
+- **While swiping,** only the current workspace slides away and nothing is shown behind it yet, like Hyprland's `workspace_swipe_create_new`. The new workspace is created when the swipe commits.
+- **Empty workspace:** nothing is created when you're on an empty workspace, so you can't chain empty groups or subs. It rubber-bands instead.
 
 ## Row mode
 
@@ -243,7 +260,8 @@ plugin {
     hyprsubs {
         row_mode = false            # toggle state at startup
         row_mode_3finger = false    # 3-finger horizontal also uses row mode while the toggle is on
-        swipe_wrap = false          # trackpad wraps past the first / last group and sub
+        swipe_group_edge = create   # past the first / last group: stop, wrap or create
+        swipe_sub_edge = stop       # past the first / last sub: stop, wrap or create
         subs_above = false          # higher subs sit above the current one instead of below
         vertical_swipe_distance = 0 # like workspace_swipe_distance, for vertical swipes only (0 = use that)
     }
