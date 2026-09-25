@@ -47,6 +47,7 @@ Horizontal movement switches groups. Vertical movement switches subs inside the 
 - IDs are not ordered along the horizontal axis (2.2 = 102 → 3.1 = 3 goes right but down in ID). This is why the plugin uses its own copy of the swipe engine (see [Implementation approach](#implementation-approach)).
 - Because they are plain workspaces, window rules, `movetoworkspace`, etc. keep working using these IDs (e.g. `workspace 3` for Discord on 3.1).
 - Any workspace whose ID fits the scheme is treated as a sub, no matter how it was created (window rule, `exec-once`, dispatcher).
+- IDs that don't fit are ignored by the plugin: multiples of 100 (100, 200, … would decode to group 0), named workspaces and special workspaces. They still work as normal Hyprland workspaces but are never part of group / sub navigation.
 - Sub numbers are **not renumbered**. If 2.2 disappears while 2.1 and 2.3 exist, 2.3 stays 2.3 and navigation skips the gap.
 - Empty subs are destroyed when you leave them (normal Hyprland behavior). The sub you are currently on is never destroyed.
 - The plugin tracks the **last-used sub per group**.
@@ -69,11 +70,10 @@ Rules:
 - New subs fill the **lowest free sub number** in group N (with 2.1 and 2.3, the new sub is 2.2). If group N has no subs, the new sub is `N.1`. In [row mode](#row-mode), the current row is used instead if that slot is free.
 - Entering a group that has no existing subs (via `SUPER + N`) goes to `N.1`.
 - Keyboard-triggered switches animate on the matching axis: group changes slide horizontally, sub changes slide vertically.
-- Keyboard wrapping is fine: it does not go through the swipe engine.
 
 ## Trackpad
 
-3-finger swipe on both axes, using Hyprland's native workspace swipe engine.
+3-finger swipe on both axes, using a copy of Hyprland's native workspace swipe engine (same tracking, thresholds and feel; see [Implementation approach](#implementation-approach)).
 
 ### Axis lock
 
@@ -241,10 +241,14 @@ The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp`
 
 ### Keyboard: animation direction
 
-`CMonitor::changeWorkspace` (`src/output/Monitor.cpp`) picks the slide direction by comparing workspace IDs (plus a wraparound check), and the style from the target's `m_animationStyle`. For plugin-initiated switches:
+`CMonitor::changeWorkspace` (`src/output/Monitor.cpp`) computes the slide direction once, as `ANIMTOLEFT = shouldWraparound(new, old) ^ (new > old)`, and takes the style from the target's `m_animationStyle`. Both are then passed to `Animation::Workspace::startAnimation` for the old workspace (`OUT`) and the new one (`IN`).
 
-- set the target workspace's `m_animationStyle` to `slide` or `slidevert`,
-- hook `Animation::Workspace::startAnimation` to override the `left` argument while the plugin's own switch is running, since IDs no longer say which way to go.
+The plugin hooks `startAnimation` and, while one of its own switches is running, replaces both arguments:
+
+- `left`: from the plugin's move (previous group / sub → `true`, next → `false`). Because the wraparound check is folded into `ANIMTOLEFT` before the call, this overrides it too: a jump like 2.2 (102) → 3.1 (3) slides right even though the ID goes down.
+- `style`: `slide` for group changes, `slidevert` for sub changes. Passing it as the argument (instead of writing `m_animationStyle`) leaves the workspace's own config untouched for non-plugin switches.
+
+A switch counts as the plugin's own from the moment a `hyprsubs:*` dispatcher calls `changeWorkspace` until it returns; `startAnimation` calls outside that window pass through unchanged.
 
 ### Maintenance
 
