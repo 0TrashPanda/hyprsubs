@@ -12,7 +12,7 @@ sub 3  │                            ...
 
 Horizontal movement switches groups. Vertical movement switches subs inside the current group.
 
-> Status: spec only. Nothing implemented yet. Target Hyprland version to be pinned before implementation.
+> Status: spec only. Nothing implemented yet. Target: Hyprland **v0.56.2** (`efb50993780079460b0cbed1363e2166a2de1d9f`).
 
 ---
 
@@ -20,8 +20,8 @@ Horizontal movement switches groups. Vertical movement switches subs inside the 
 
 | Term | Meaning |
 |---|---|
-| **Group** | A horizontal slot, addressed by number (1, 2, 3, …). The number row keys map to groups 1–9; higher groups are reachable via dispatchers. Groups are uncapped. |
-| **Sub** | A vertical layer inside a group (2.1, 2.2, …). Up to 99 per group. |
+| **Group** | A horizontal slot, addressed by number (1–99). The number row keys map to groups 1–9; 10–99 are reachable via dispatchers. |
+| **Sub** | A vertical layer inside a group (2.1, 2.2, …). Uncapped. |
 | **Last-used sub** | Per group, the sub you were most recently on. Used whenever you enter a group from outside. If a group has no history yet (e.g. right after login), its lowest existing sub is used. |
 | **Row** | All subs with the same index across groups (2.2, 3.2, 4.2, …). Used by [row mode](#row-mode). |
 
@@ -30,18 +30,22 @@ Horizontal movement switches groups. Vertical movement switches subs inside the 
 - Every (group, sub) pair is an ordinary Hyprland workspace with a fixed ID:
 
   ```
-  id = group × 100 + sub
+  id = (sub − 1) × 100 + group
   ```
+
+  The last two digits are the group, everything before them is the sub minus one.
 
   | Group.Sub | Workspace ID |
   |---|---|
-  | 1.1 | 101 |
-  | 2.1 | 201 |
-  | 2.2 | 202 |
-  | 3.14 | 314 |
+  | 1.1 | 1 |
+  | 2.1 | 2 |
+  | 2.2 | 102 |
+  | 3.14 | 1303 |
+  | 42.7 | 642 |
 
-- This ordering matters: moving right always means a higher ID, moving down always means a higher ID. The native swipe engine relies on that (see [Implementation approach](#implementation-approach)).
-- Because they are plain workspaces, window rules, `movetoworkspace`, etc. keep working using these IDs (e.g. `workspace 301` for Discord on 3.1).
+- **The first sub of every group is a plain workspace ID (1–99).** Existing window rules and binds keep working, and with the plugin unloaded (or crashed) you are left with a normal Hyprland setup where only the extra subs sit on higher IDs.
+- IDs are not ordered along the horizontal axis (2.2 = 102 → 3.1 = 3 goes right but down in ID). This is why the plugin uses its own copy of the swipe engine (see [Implementation approach](#implementation-approach)).
+- Because they are plain workspaces, window rules, `movetoworkspace`, etc. keep working using these IDs (e.g. `workspace 3` for Discord on 3.1).
 - Any workspace whose ID fits the scheme is treated as a sub, no matter how it was created (window rule, `exec-once`, dispatcher).
 - Sub numbers are **not renumbered**. If 2.2 disappears while 2.1 and 2.3 exist, 2.3 stays 2.3 and navigation skips the gap.
 - Empty subs are destroyed when you leave them (normal Hyprland behavior). The sub you are currently on is never destroyed.
@@ -79,13 +83,13 @@ Handled natively by Hyprland: the first ~5px of movement decides horizontal or v
 
 - Target: the next / previous group **that has at least one window**. Empty groups are skipped, like the native swipe.
 - Lands on that group's last-used sub (or the same sub index in [row mode](#row-mode)).
-- **No wrapping.** Past the first / last group, the swipe rubber-bands and snaps back.
+- Past the first / last group: wraps around if `swipe_wrap = true`, otherwise rubber-bands and snaps back.
 
 ### Vertical: switch sub
 
 - Target: the next / previous **existing** sub in the current group (gaps are skipped).
 - Natural direction: fingers up → next sub comes in from below. Fingers down → previous sub comes in from above.
-- **No wrapping.** Past the first / last sub, the swipe rubber-bands and snaps back.
+- Past the first / last sub: wraps around if `swipe_wrap = true`, otherwise rubber-bands and snaps back.
 
 ### Tracking and release
 
@@ -94,6 +98,7 @@ All native behavior, reused as-is:
 - Both axes track the fingers **1:1**.
 - Commit vs snap-back is decided by `gestures:workspace_swipe_cancel_ratio` (distance) and `gestures:workspace_swipe_min_speed_to_force` (flick speed).
 - The finish animation (commit or snap-back) stays on the swipe axis.
+- On a wrap, the target slides in from the side you are swiping toward. It never animates backwards across the skipped workspaces.
 
 ## Row mode
 
@@ -105,7 +110,7 @@ project 1 │  1.1       2.1         3.1
 project 2 │  1.2       2.2         3.2
 ```
 
-In row mode, horizontal moves keep the **same sub index** instead of using last-used: 2.2 → 3.2. This is compatible with the native engine, since 202 → 302 is a higher ID.
+In row mode, horizontal moves keep the **same sub index** instead of using last-used: 2.2 → 3.2.
 
 ### Triggers
 
@@ -154,15 +159,15 @@ Nothing plugin-specific: target the workspace ID directly.
 Window rules (preferred, also catch relaunches):
 
 ```ini
-windowrule = workspace 301 silent, match:class ^(discord)$
-windowrule = workspace 302 silent, match:class ^(Element)$
-windowrule = workspace 202 silent, match:class ^(code)$
+windowrule = workspace 3 silent, match:class ^(discord)$     # 3.1
+windowrule = workspace 103 silent, match:class ^(Element)$   # 3.2
+windowrule = workspace 102 silent, match:class ^(code)$      # 2.2
 ```
 
 One-off at launch:
 
 ```ini
-exec-once = [workspace 201 silent] kitty
+exec-once = [workspace 2 silent] kitty                       # 2.1
 ```
 
 ## State query
@@ -175,7 +180,7 @@ Returns the current position and every group's subs, for scripts and a future DM
 
 ```json
 {
-  "current": { "group": 2, "sub": 3, "workspace": 203 },
+  "current": { "group": 2, "sub": 3, "workspace": 202 },
   "row_mode": false,
   "row": 3,
   "groups": [
@@ -215,19 +220,35 @@ plugin {
     hyprsubs {
         row_mode = false            # toggle state at startup
         row_mode_3finger = false    # 3-finger horizontal also uses row mode while the toggle is on
+        swipe_wrap = false          # trackpad wraps past the first / last group and sub
     }
 }
 ```
 
 ## Implementation approach
 
-The plugin reuses Hyprland's native swipe engine (`CUnifiedWorkspaceSwipeGesture`) instead of reimplementing tracking, thresholds and flick handling. It hooks three things:
+Checked against the v0.56.2 source.
 
-1. **Target selection.** The engine asks the workspace resolver for `m-1` / `m+1`. While a swipe is running, the plugin hooks that resolver call and returns its own target (neighbor group or neighbor sub).
-2. **Swipe axis.** The engine decides horizontal vs vertical drawing from the workspace's animation style (`slide` vs `slidevert`), not from the gesture. The plugin hooks the gesture's `begin()` (which knows the direction) and sets a per-workspace animation config (`setConfig`) with the matching style. The same trick, via the style override on the workspace animation, gives keyboard switches the right axis.
-3. **ID ordering.** The engine rejects targets on the numerically wrong side (left must be a lower ID, right a higher one). The `group × 100 + sub` scheme satisfies this on both axes. The only thing it rules out is wrapping, which is why the trackpad doesn't wrap.
+### Trackpad: copied swipe engine
 
-Fallback if the hooks turn out too fragile: copy the swipe engine file into the plugin and redirect calls to the copy.
+The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp` (~360 lines). The plugin ships a copy of it and hooks `CWorkspaceSwipeGesture::begin / update / end` (`src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.cpp`) to drive the copy instead of the global `g_pUnifiedWorkspaceSwipe`. Tracking, commit ratio, flick speed and snap-back math stay verbatim. Three changes in the copy:
+
+1. **Targets.** The native code gets neighbors from `getWorkspaceIDNameFromString("m-1" / "m+1")`. The copy asks the plugin instead (neighbor group or neighbor sub, row mode or not).
+2. **ID order checks removed.** The native code refuses a target that is on the numerically wrong side (left must be a lower ID, right a higher one). With `(sub − 1) × 100 + group` that doesn't hold horizontally, so those checks go.
+3. **Axis from the gesture.** The native code decides horizontal vs vertical drawing from the workspace's animation style (`slidevert`). The copy uses the gesture direction passed to `begin()` instead.
+
+`begin()` also receives the swipe event, which carries the finger count: 4 fingers → row mode.
+
+### Keyboard: animation direction
+
+`CMonitor::changeWorkspace` (`src/output/Monitor.cpp`) picks the slide direction by comparing workspace IDs (plus a wraparound check), and the style from the target's `m_animationStyle`. For plugin-initiated switches:
+
+- set the target workspace's `m_animationStyle` to `slide` or `slidevert`,
+- hook `Animation::Workspace::startAnimation` to override the `left` argument while the plugin's own switch is running, since IDs no longer say which way to go.
+
+### Maintenance
+
+The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwipeGesture.cpp` (it already differs between v0.56.2 and current main). Everything else is a small set of hooks.
 
 ## Not in v1
 
@@ -235,10 +256,9 @@ Fallback if the hooks turn out too fragile: copy the swipe engine file into the 
 - DMS bar integration. DMS currently draws one shape per workspace, so each sub shows as its own shape. A later DMS tweak could read `hyprctl hyprsubs -j` to show sub count / current sub inside the group's shape.
 - Overview / grid view of all groups and subs.
 - Dragging windows between subs with the trackpad.
-- Wrapping on the trackpad.
 
 ## Migration from a stock config
 
 1. Replace `gesture = 3, horizontal, workspace` with the horizontal + vertical pair from [Configuration](#configuration).
 2. Replace the `SUPER + N` / `SUPER + SHIFT + N` workspace binds with the `hyprsubs:*` dispatchers above (DMS's `binds.conf` may define these).
-3. Update window rules that target workspace IDs: workspace `N` becomes `N × 100 + 1` (`1 → 101`, `3 → 301`, etc.).
+3. Existing window rules keep working: workspace `N` is group N's first sub. Only rules for extra subs need new IDs (`N.2 → 100 + N`).
