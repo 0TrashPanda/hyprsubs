@@ -12,7 +12,18 @@ sub 3  │                            ...
 
 Horizontal movement switches groups. Vertical movement switches subs inside the current group.
 
-> Status: spec only. Nothing implemented yet. Target: Hyprland **v0.56.2** (`efb50993780079460b0cbed1363e2166a2de1d9f`).
+> Status: v1 implemented, keyboard dispatchers tested; trackpad swipes still need real-hardware testing. Target: Hyprland **v0.56.2** (`efb50993780079460b0cbed1363e2166a2de1d9f`).
+
+## Build and load
+
+Needs the Hyprland headers matching your running Hyprland (`pkg-config --modversion hyprland`).
+
+```bash
+make
+hyprctl plugin load "$PWD/hyprsubs.so"
+```
+
+Or load it at startup with `plugin = /path/to/hyprsubs.so` in `hyprland.conf`.
 
 ---
 
@@ -88,7 +99,7 @@ Handled natively by Hyprland: the first ~5px of movement decides horizontal or v
 ### Vertical: switch sub
 
 - Target: the next / previous **existing** sub in the current group (gaps are skipped).
-- Natural direction: fingers up → next sub comes in from below. Fingers down → previous sub comes in from above.
+- Natural direction: fingers up → next sub comes in from below. Fingers down → previous sub comes in from above. With `subs_above = true` this flips: higher subs sit above, so fingers down brings in the next sub.
 - Past the first / last sub: wraps around if `swipe_wrap = true`, otherwise rubber-bands and snaps back.
 
 ### Tracking and release
@@ -127,6 +138,7 @@ In row mode, horizontal moves keep the **same sub index** instead of using last-
 - The plugin keeps a **current row**, starting as the sub you are on.
 - A row-mode horizontal move targets the current row in the next group. If that group doesn't have it (3.2 missing), you land on the group's last-used sub, and the row is **kept**. The next row-mode move tries the row again (→ 4.2).
 - The row is **reset** to your current sub when you change sub on purpose: a vertical swipe, `SUPER + N` cycling, or `hyprsubs:sub` / `hyprsubs:movesub`.
+- Any other workspace change also resets it to the sub you land on (a non-row-mode move, a bar click, a native `workspace` dispatch). Only row-mode horizontal moves keep it.
 - Groups with no windows are still skipped.
 
 ## Dispatchers
@@ -221,6 +233,8 @@ plugin {
         row_mode = false            # toggle state at startup
         row_mode_3finger = false    # 3-finger horizontal also uses row mode while the toggle is on
         swipe_wrap = false          # trackpad wraps past the first / last group and sub
+        subs_above = false          # higher subs sit above the current one instead of below
+        vertical_swipe_distance = 0 # like workspace_swipe_distance, for vertical swipes only (0 = use that)
     }
 }
 ```
@@ -245,7 +259,7 @@ The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp`
 
 The plugin hooks `startAnimation` and, while one of its own switches is running, replaces both arguments:
 
-- `left`: from the plugin's move (previous group / sub → `true`, next → `false`). Because the wraparound check is folded into `ANIMTOLEFT` before the call, this overrides it too: a jump like 2.2 (102) → 3.1 (3) slides right even though the ID goes down.
+- `left`: from the plugin's move (next group / sub → `true`, previous → `false`; `true` slides the new workspace in from the right / bottom). Because the wraparound check is folded into `ANIMTOLEFT` before the call, this overrides it too: a jump like 2.2 (102) → 3.1 (3) slides right even though the ID goes down.
 - `style`: `slide` for group changes, `slidevert` for sub changes. Passing it as the argument (instead of writing `m_animationStyle`) leaves the workspace's own config untouched for non-plugin switches.
 
 A switch counts as the plugin's own from the moment a `hyprsubs:*` dispatcher calls `changeWorkspace` until it returns; `startAnimation` calls outside that window pass through unchanged.
