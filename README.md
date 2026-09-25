@@ -196,9 +196,9 @@ Returns the current position and every group's subs, for scripts and a future DM
   "row_mode": false,
   "row": 3,
   "groups": [
-    { "group": 1, "subs": [1],    "total": 1, "last_used": 1 },
-    { "group": 2, "subs": [1, 3], "total": 2, "last_used": 3 },
-    { "group": 3, "subs": [1, 2], "total": 2, "last_used": 1 }
+    { "group": 1, "subs": [1],    "total": 1, "last_used": 1, "windows": 2 },
+    { "group": 2, "subs": [1, 3], "total": 2, "last_used": 3, "windows": 3 },
+    { "group": 3, "subs": [1, 2], "total": 2, "last_used": 1, "windows": 1 }
   ]
 }
 ```
@@ -206,8 +206,19 @@ Returns the current position and every group's subs, for scripts and a future DM
 - `subs`: existing sub numbers in ascending order (gaps visible).
 - `total`: number of existing subs.
 - `last_used`: the sub `SUPER + N` / horizontal swipe would land on (outside row mode).
+- `windows`: number of windows across the group's subs.
 - `row_mode`: toggle state.
 - `row`: the remembered row, i.e. the project you're in, even if you've landed on a different sub.
+
+### Change event
+
+Whenever this state changes, the plugin posts the same JSON on one line to Hyprland's event socket (`.socket2.sock`):
+
+```
+hyprsubs>>{"current": { "group": 2, "sub": 3, "workspace": 202 },"row_mode": false, ...}
+```
+
+Changes are collected until the compositor is idle and duplicates are dropped, so a burst of workspace or window events produces one line. Bars can listen to this instead of polling `hyprctl`. The DMS bar widget lives in its own repo, [hyprsubs-dms](https://github.com/0TrashPanda/hyprsubs-dms).
 
 ## Configuration
 
@@ -271,7 +282,6 @@ The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwi
 ## Not in v1
 
 - Multi-monitor awareness (per-monitor groups). v1 acts on the focused monitor only.
-- DMS bar integration. DMS currently draws one shape per workspace, so each sub shows as its own shape. A later DMS tweak could read `hyprctl hyprsubs -j` to show sub count / current sub inside the group's shape.
 - Overview / grid view of all groups and subs.
 - Dragging windows between subs with the trackpad.
 

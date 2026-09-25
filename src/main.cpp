@@ -11,7 +11,9 @@
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
@@ -146,6 +148,8 @@ static void hkStartAnimation(PHLWORKSPACE ws, Animation::Workspace::eAnimationTy
 }
 
 // ---------------------------------------------------------------- switching
+
+static void scheduleChanged();
 
 static std::optional<SPos> currentPos() {
     const auto MON = Desktop::focusState()->monitor();
@@ -319,41 +323,58 @@ static SDispatchResult rowMode(const std::string& args) {
     else
         return err("hyprsubs: expected on, off or toggle");
 
+    scheduleChanged();
     return {};
 }
 
 // ---------------------------------------------------------------- hyprctl
 
-static std::string stateQuery(eHyprCtlOutputFormat format, std::string) {
-    const auto MON = Desktop::focusState()->monitor();
+// pretty: indented multi-line (hyprctl -j); otherwise one line (IPC event)
+static std::string stateJson(bool pretty) {
     const auto CUR = currentPos();
     const auto MAP = layout();
 
-    if (format == FORMAT_JSON) {
-        std::string out = "{\n";
+    const std::string NL  = pretty ? "\n" : "";
+    const std::string IND = pretty ? "  " : "";
 
-        if (CUR)
-            out += std::format(R"(  "current": {{ "group": {}, "sub": {}, "workspace": {} }},)", CUR->group, CUR->sub, encode(CUR->group, CUR->sub)) + "\n";
-        else
-            out += "  \"current\": null,\n";
+    std::unordered_map<int, int> windows;
+    for (const auto& ws : State::workspaceState()->workspaces()) {
+        if (const auto POS = posOf(ws.lock()))
+            windows[POS->group] += ws->getWindowCount();
+    }
 
-        out += std::format("  \"row_mode\": {},\n  \"row\": {},\n  \"groups\": [", g_state.m_rowMode, g_state.m_row);
+    std::string out = "{" + NL;
 
-        bool first = true;
-        for (const auto& [g, subs] : MAP) {
-            std::string list;
-            for (const int s : subs) {
-                list += (list.empty() ? "" : ", ") + std::to_string(s);
-            }
+    if (CUR)
+        out += std::format(R"({}"current": {{ "group": {}, "sub": {}, "workspace": {} }},)", IND, CUR->group, CUR->sub, encode(CUR->group, CUR->sub)) + NL;
+    else
+        out += IND + "\"current\": null," + NL;
 
-            out += std::format(R"({}{}    {{ "group": {}, "subs": [{}], "total": {}, "last_used": {} }})", first ? "" : ",", "\n", g, list, subs.size(),
-                               g_state.lastUsedSub(g, MAP));
-            first = false;
+    out += std::format(R"({}"row_mode": {},{}{}"row": {},{}{}"groups": [)", IND, g_state.m_rowMode, NL, IND, g_state.m_row, NL, IND);
+
+    bool first = true;
+    for (const auto& [g, subs] : MAP) {
+        std::string list;
+        for (const int s : subs) {
+            list += (list.empty() ? "" : ", ") + std::to_string(s);
         }
 
-        out += MAP.empty() ? "]\n}" : "\n  ]\n}";
-        return out;
+        out += std::format(R"({}{}{}{{ "group": {}, "subs": [{}], "total": {}, "last_used": {}, "windows": {} }})", first ? "" : ",", NL, IND + IND, g, list, subs.size(),
+                           g_state.lastUsedSub(g, MAP), windows[g]);
+        first = false;
     }
+
+    out += (MAP.empty() ? "" : NL + IND) + "]" + NL + "}";
+    return out;
+}
+
+static std::string stateQuery(eHyprCtlOutputFormat format, std::string) {
+    if (format == FORMAT_JSON)
+        return stateJson(true);
+
+    const auto MON = Desktop::focusState()->monitor();
+    const auto CUR = currentPos();
+    const auto MAP = layout();
 
     std::string out;
     if (CUR)
@@ -372,6 +393,29 @@ static std::string stateQuery(eHyprCtlOutputFormat format, std::string) {
     }
 
     return out;
+}
+
+// ---------------------------------------------------------------- change event
+
+// Posts "hyprsubs>>{state json}" on the Hyprland event socket when the state changed.
+// Deferred to an idle callback so bursts collapse into one event and window counts are settled.
+static UP<SEventLoopDoLaterLock> g_emitLater;
+static std::string               g_lastEmitted;
+
+static void scheduleChanged() {
+    if (g_emitLater)
+        return;
+
+    g_emitLater = g_pEventLoopManager->doLaterLock([] {
+        g_emitLater.reset(); // already ran: removing it is a no-op
+
+        auto json = stateJson(false);
+        if (json == g_lastEmitted)
+            return;
+
+        g_lastEmitted = std::move(json);
+        g_pEventManager->postEvent(SHyprIPCEvent{"hyprsubs", g_lastEmitted});
+    });
 }
 
 // ---------------------------------------------------------------- init
@@ -405,8 +449,9 @@ static void fail(const std::string& msg) {
     throw std::runtime_error("[hyprsubs] " + msg);
 }
 
-static CHyprSignalListener g_activeListener;
-static CHyprSignalListener g_reloadListener;
+static CHyprSignalListener              g_activeListener;
+static CHyprSignalListener              g_reloadListener;
+static std::vector<CHyprSignalListener> g_changeListeners;
 static SP<SHyprCtlCommand>  g_hyprctlCommand;
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
@@ -458,6 +503,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_activeListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE ws) { g_state.onWorkspaceActive(ws); });
 
+    auto& EV = Event::bus()->m_events;
+    g_changeListeners.emplace_back(EV.workspace.active.listen([](PHLWORKSPACE) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.workspace.created.listen([](PHLWORKSPACEREF) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.workspace.removed.listen([](PHLWORKSPACEREF) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.workspace.moveToMonitor.listen([](PHLWORKSPACE, PHLMONITOR) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.window.open.listen([](PHLWINDOW) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.window.destroy.listen([](PHLWINDOWREF) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.window.moveToWorkspace.listen([](PHLWINDOW, PHLWORKSPACE) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.monitor.focused.listen([](PHLMONITOR) { scheduleChanged(); }));
+
     // row_mode is the state at startup: apply it once, on the first config (re)load
     static bool rowModeApplied = false;
     g_reloadListener           = Event::bus()->m_events.config.reloaded.listen([] {
@@ -465,10 +520,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             return;
         rowModeApplied    = true;
         g_state.m_rowMode = Cfg::rowModeAtStart();
+        scheduleChanged();
     });
 
     g_state.seedFromMonitors();
     g_state.m_rowMode = Cfg::rowModeAtStart();
+    scheduleChanged();
 
     return {"hyprsubs", "2D workspaces: groups (horizontal) with subs (vertical)", "0TrashPanda", "0.1"};
 }
@@ -476,6 +533,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     g_activeListener.reset();
     g_reloadListener.reset();
+    g_changeListeners.clear();
+    g_emitLater.reset();
 
     if (g_hyprctlCommand)
         HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_hyprctlCommand);
