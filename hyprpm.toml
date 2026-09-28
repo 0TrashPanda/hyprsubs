@@ -7,4 +7,4 @@ commit_pins = []
 description = "2D workspaces: groups (horizontal) with subs (vertical) and 1:1 trackpad swiping on both axes"
 authors = ["0TrashPanda"]
 output = "hyprsubs.so"
-build = ["make all"]
+build = ["make all", "make config"]

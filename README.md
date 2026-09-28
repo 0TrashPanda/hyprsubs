@@ -18,9 +18,11 @@ Horizontal movement switches groups. Vertical movement switches subs inside the 
 
 hyprsubs is a compiled plugin: it has to be built against the same Hyprland version you're running, and rebuilt whenever Hyprland updates. It refuses to load if the versions don't match. Tested on Hyprland **v0.56.2**.
 
+Both of Hyprland's config formats are supported. The examples show the **Lua config** (`hyprland.lua`) first, then the hyprlang equivalent (`hyprland.conf`).
+
 ### With hyprpm (recommended)
 
-`hyprpm` is Hyprland's plugin manager. It ships with Hyprland on most distros. It clones, builds, and rebuilds the plugin after Hyprland updates.
+`hyprpm` is Hyprland's plugin manager. It clones, builds, and rebuilds the plugin after Hyprland updates. Some distro packages don't include it (Arch's `hyprland` 0.56 doesn't); there it has to be built from Hyprland's source (`hyprpm/`).
 
 ```bash
 hyprpm update                                          # fetch headers for your Hyprland version
@@ -28,13 +30,23 @@ hyprpm add https://github.com/0TrashPanda/hyprsubs     # clone + build
 hyprpm enable hyprsubs
 ```
 
-To load it at login, add this to `hyprland.conf`:
+To load it at login:
+
+```lua
+-- hyprland.lua
+hl.on("hyprland.start", function()
+    hl.exec_cmd("hyprpm reload -n")
+end)
+```
 
 ```ini
+# hyprland.conf
 exec-once = hyprpm reload -n
 ```
 
 After a Hyprland update, run `hyprpm update` to rebuild. It also pulls new hyprsubs commits.
+
+The install also creates `~/.config/hypr/hyprsubs.lua` (or `hyprsubs.conf`) with the default binds, gestures and options, see [Default config](#default-config).
 
 ### Manually
 
@@ -44,11 +56,18 @@ Needs `make`, `g++`, `pkg-config` and the Hyprland headers matching your running
 git clone https://github.com/0TrashPanda/hyprsubs ~/.local/src/hyprsubs
 cd ~/.local/src/hyprsubs
 make
+make config     # creates ~/.config/hypr/hyprsubs.lua / .conf, see Default config
 ```
 
-Load it at startup (absolute path) in `hyprland.conf`:
+Load it at startup (absolute path):
+
+```lua
+-- hyprland.lua
+hl.plugin.load("/home/<you>/.local/src/hyprsubs/hyprsubs.so")
+```
 
 ```ini
+# hyprland.conf
 plugin = /home/<you>/.local/src/hyprsubs/hyprsubs.so
 ```
 
@@ -59,9 +78,31 @@ cd ~/.local/src/hyprsubs && git pull && make
 hyprctl plugin unload "$PWD/hyprsubs.so" && hyprctl plugin load "$PWD/hyprsubs.so"
 ```
 
+### Default config
+
+Both install methods put a default config next to your Hyprland config (`~/.config/hypr`, or under `$XDG_CONFIG_HOME`), in the matching format:
+
+| Your config | Created file | Enable it with (at the **end** of your config) |
+|---|---|---|
+| `hyprland.lua` | [`hyprsubs.lua`](hyprsubs.lua) | `require("hyprsubs")` |
+| `hyprland.conf` | [`hyprsubs.conf`](hyprsubs.conf) | `source = ~/.config/hypr/hyprsubs.conf` |
+
+If both exist, both are created. If neither does, the Lua one is. Each contains:
+
+- all [plugin options](#configuration) at their defaults,
+- the vertical and 4-finger gestures,
+- the `SUPER (+ SHIFT / CTRL) + 1–9` binds from [Keyboard](#keyboard), each replacing (unbinding) whatever the key did before.
+
+Notes:
+
+- **Created only if it doesn't exist yet,** so later updates never overwrite your edits. To get a fresh copy, delete the file and run `hyprpm update` or `make config` again.
+- **Enable it at the end** of your config, after your other binds (and after any generated binds, e.g. DMS's `binds.conf`), so its unbinds replace the stock `SUPER + N` workspace binds.
+- **3-finger horizontal gesture:** that line is commented out in the file. Hyprland's default config already has it, and defining a gesture twice is a config error. Uncomment it if your config doesn't have one.
+- **Lua:** the file does nothing until the plugin is loaded (it checks `hl.plugin.hyprsubs`). When the plugin loads, it reloads the config once so the file takes effect. That covers both `hl.plugin.load` and hyprpm.
+
 ### Then
 
-1. Set up binds and gestures: see [Keyboard](#keyboard), [Configuration](#configuration) and [Migration from a stock config](#migration-from-a-stock-config).
+1. Check the binds and gestures fit your setup: [Keyboard](#keyboard), [Configuration](#configuration), [Migration from a stock config](#migration-from-a-stock-config).
 2. Optional: the DMS bar widget, [hyprsubs-dms](https://github.com/0TrashPanda/hyprsubs-dms).
 
 ### Development
@@ -112,7 +153,7 @@ hyprctl plugin load "$PWD/hyprsubs.so"
 
 ## Keyboard
 
-All actions below are exposed as dispatchers (see [Dispatchers](#dispatchers)); the binds are the intended defaults.
+All actions below are exposed as dispatchers (see [Dispatchers](#dispatchers)); the binds are the intended defaults (set up by the [default config](#default-config)).
 
 | Bind | From another group | While already in group N |
 |---|---|---|
@@ -189,7 +230,7 @@ In row mode, horizontal moves keep the **same sub index** instead of using last-
 ### Triggers
 
 - **4-finger horizontal swipe:** always row mode.
-- **Toggle** (`hyprsubs:rowmode`): while on, it changes the keyboard:
+- **Toggle** (`rowmode` [dispatcher](#dispatchers)): while on, it changes the keyboard:
   - `SUPER + N` from another group goes to group N at the current row.
   - `SUPER + SHIFT + N` from another group moves the window to group N at the current row.
   - `SUPER + N` / `SUPER + SHIFT + N` inside group N still cycle subs, unchanged.
@@ -200,49 +241,79 @@ In row mode, horizontal moves keep the **same sub index** instead of using last-
 
 - The plugin keeps a **current row**, starting as the sub you are on.
 - A row-mode horizontal move targets the current row in the next group. If that group doesn't have it (3.2 missing), you land on the group's last-used sub, and the row is **kept**. The next row-mode move tries the row again (→ 4.2).
-- The row is **reset** to your current sub when you change sub on purpose: a vertical swipe, `SUPER + N` cycling, or `hyprsubs:sub` / `hyprsubs:movesub`.
+- The row is **reset** to your current sub when you change sub on purpose: a vertical swipe, `SUPER + N` cycling, or the `sub` / `movesub` dispatchers.
 - Any other workspace change also resets it to the sub you land on (a non-row-mode move, a bar click, a native `workspace` dispatch). Only row-mode horizontal moves keep it.
 - Groups with no windows are still skipped.
 
 ## Dispatchers
 
-| Dispatcher | Argument | Action |
+| Action | Argument | Does |
 |---|---|---|
-| `hyprsubs:group` | `N` | Same as `SUPER + N` |
-| `hyprsubs:movegroup` | `N` | Same as `SUPER + SHIFT + N` |
-| `hyprsubs:newsub` | `N` | Same as `SUPER + CTRL + N` |
-| `hyprsubs:movenewsub` | `N` | Same as `SUPER + CTRL + SHIFT + N` |
-| `hyprsubs:sub` | `next` \| `prev` \| `S` | Go to the next / previous existing sub (wrapping), or to sub `S` of the current group |
-| `hyprsubs:movesub` | `next` \| `prev` \| `S` | Move the focused window there; view follows |
-| `hyprsubs:groupcycle` | `next` \| `prev` | Go to the next / previous group with windows (wrapping), on its last-used sub |
-| `hyprsubs:rowmode` | `on` \| `off` \| `toggle` | Row mode toggle |
+| `group` | `N` | Same as `SUPER + N` |
+| `movegroup` | `N` | Same as `SUPER + SHIFT + N` |
+| `newsub` | `N` | Same as `SUPER + CTRL + N` |
+| `movenewsub` | `N` | Same as `SUPER + CTRL + SHIFT + N` |
+| `sub` | `next` \| `prev` \| `S` | Go to the next / previous existing sub (wrapping), or to sub `S` of the current group |
+| `movesub` | `next` \| `prev` \| `S` | Move the focused window there; view follows |
+| `groupcycle` | `next` \| `prev` | Go to the next / previous group with windows (wrapping), on its last-used sub |
+| `rowmode` | `on` \| `off` \| `toggle` | Row mode toggle (Lua: no argument = `toggle`) |
 
-Example binds (`hyprland.conf`):
+### Lua config
+
+Each action is `hl.plugin.hyprsubs.<action>(arg)`. Like `hl.dsp.*`, calling it returns a dispatcher that you bind or dispatch:
+
+```lua
+local subs = hl.plugin.hyprsubs
+
+hl.bind("SUPER + 1", subs.group(1))
+hl.bind("SUPER + Page_Down", subs.groupcycle("next"))
+hl.bind("SUPER + R", subs.rowmode())
+
+hl.dispatch(subs.sub("next"))
+```
+
+From a shell (with a Lua config, `hyprctl dispatch` takes Lua):
+
+```bash
+hyprctl dispatch 'hl.plugin.hyprsubs.group(2)'
+```
+
+Also available:
+
+- `hl.plugin.hyprsubs.run(action, arg)` runs an action immediately and returns `{ ok = bool, error = string? }`.
+- `hl.plugin.hyprsubs.state()` returns the [state JSON](#state-query) as a string.
+
+`hl.plugin.hyprsubs` only exists once the plugin is loaded, so guard code that uses it with `if hl.plugin.hyprsubs then … end`. The plugin reloads the config after loading, so guarded code still runs.
+
+### hyprlang config
+
+Each action is the dispatcher `hyprsubs:<action>`:
 
 ```ini
 bind = SUPER, 1, hyprsubs:group, 1
-bind = SUPER SHIFT, 1, hyprsubs:movegroup, 1
-bind = SUPER CTRL, 1, hyprsubs:newsub, 1
-bind = SUPER CTRL SHIFT, 1, hyprsubs:movenewsub, 1
-# ...repeat for 2–9
+bind = SUPER, Page_Down, hyprsubs:groupcycle, next
+```
+
+```bash
+hyprctl dispatch hyprsubs:group 2
 ```
 
 ## Autostart
 
-Nothing plugin-specific: target the workspace ID directly.
+Nothing plugin-specific: target the workspace ID directly. Window rules (they also catch relaunches):
 
-Window rules (preferred, also catch relaunches):
+```lua
+-- hyprland.lua
+hl.window_rule({ match = { class = "^(discord)$" }, workspace = "3 silent" })   -- 3.1
+hl.window_rule({ match = { class = "^(Element)$" }, workspace = "103 silent" }) -- 3.2
+hl.window_rule({ match = { class = "^(code)$" },    workspace = "102 silent" }) -- 2.2
+```
 
 ```ini
+# hyprland.conf
 windowrule = workspace 3 silent, match:class ^(discord)$     # 3.1
 windowrule = workspace 103 silent, match:class ^(Element)$   # 3.2
 windowrule = workspace 102 silent, match:class ^(code)$      # 2.2
-```
-
-One-off at launch:
-
-```ini
-exec-once = [workspace 2 silent] kitty                       # 2.1
 ```
 
 ## State query
@@ -251,7 +322,7 @@ exec-once = [workspace 2 silent] kitty                       # 2.1
 hyprctl hyprsubs -j
 ```
 
-Returns the current position and every group's subs, for scripts and a future DMS integration:
+Returns the current position and every group's subs, for scripts and bars (with a Lua config also `hl.plugin.hyprsubs.state()`):
 
 ```json
 {
@@ -287,7 +358,23 @@ Changes are collected until the compositor is idle and duplicates are dropped, s
 
 Swipe feel is configured with Hyprland's native options:
 
+```lua
+-- hyprland.lua
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
+hl.gesture({ fingers = 3, direction = "vertical",   action = "workspace" })
+hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" }) -- row mode swipe
+
+hl.config({
+    gestures = {
+        workspace_swipe_cancel_ratio       = 0.5,
+        workspace_swipe_min_speed_to_force = 30,
+        workspace_swipe_distance           = 300,
+    },
+})
+```
+
 ```ini
+# hyprland.conf
 gesture = 3, horizontal, workspace
 gesture = 3, vertical, workspace
 gesture = 4, horizontal, workspace   # row mode swipe
@@ -301,7 +388,24 @@ gestures {
 
 Plugin options (only what the native engine doesn't cover):
 
+```lua
+-- hyprland.lua (after the plugin is loaded, see Default config)
+hl.config({
+    plugin = {
+        hyprsubs = {
+            row_mode                = false,    -- toggle state at startup
+            row_mode_3finger        = false,    -- 3-finger horizontal also uses row mode while the toggle is on
+            swipe_group_edge        = "create", -- past the first / last group: "stop", "wrap" or "create"
+            swipe_sub_edge          = "stop",   -- past the first / last sub: "stop", "wrap" or "create"
+            subs_above              = false,    -- higher subs sit above the current one instead of below
+            vertical_swipe_distance = 0,        -- like workspace_swipe_distance, vertical swipes only (0 = use that)
+        },
+    },
+})
+```
+
 ```ini
+# hyprland.conf
 plugin {
     hyprsubs {
         row_mode = false            # toggle state at startup
@@ -337,7 +441,7 @@ The plugin hooks `startAnimation` and, while one of its own switches is running,
 - `left`: from the plugin's move (next group / sub → `true`, previous → `false`; `true` slides the new workspace in from the right / bottom). Because the wraparound check is folded into `ANIMTOLEFT` before the call, this overrides it too: a jump like 2.2 (102) → 3.1 (3) slides right even though the ID goes down.
 - `style`: `slide` for group changes, `slidevert` for sub changes. Passing it as the argument (instead of writing `m_animationStyle`) leaves the workspace's own config untouched for non-plugin switches.
 
-A switch counts as the plugin's own from the moment a `hyprsubs:*` dispatcher calls `changeWorkspace` until it returns; `startAnimation` calls outside that window pass through unchanged.
+A switch counts as the plugin's own from the moment one of its dispatchers calls `changeWorkspace` until it returns; `startAnimation` calls outside that window pass through unchanged.
 
 ### Maintenance
 
@@ -351,6 +455,9 @@ The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwi
 
 ## Migration from a stock config
 
-1. Replace `gesture = 3, horizontal, workspace` with the horizontal + vertical pair from [Configuration](#configuration).
-2. Replace the `SUPER + N` / `SUPER + SHIFT + N` workspace binds with the `hyprsubs:*` dispatchers above (DMS's `binds.conf` may define these).
+The [default config](#default-config) does steps 1 and 2 for you.
+
+1. Add the vertical (and optionally 4-finger) gesture next to the stock 3-finger horizontal one, see [Configuration](#configuration).
+2. Replace the `SUPER + N` / `SUPER + SHIFT + N` workspace binds with hyprsubs [dispatchers](#dispatchers) (DMS's `binds.conf` may define these).
 3. Existing window rules keep working: workspace `N` is group N's first sub. Only rules for extra subs need new IDs (`N.2 → 100 + N`).
+4. Moving from `hyprland.conf` to `hyprland.lua`: `hyprsubs:<action> arg` becomes `hl.plugin.hyprsubs.<action>(arg)`, `plugin { hyprsubs { … } }` becomes `hl.config({ plugin = { hyprsubs = { … } } })`, and `source = …/hyprsubs.conf` becomes `require("hyprsubs")` with the Lua template (`make config` installs it once `hyprland.lua` exists).

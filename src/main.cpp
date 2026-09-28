@@ -3,6 +3,7 @@
 #include "SwipeEngine.hpp"
 
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
@@ -24,6 +25,9 @@
 #include <algorithm>
 #include <dlfcn.h>
 #include <format>
+#include <utility>
+
+#include <lua.hpp> // extern "C" lua.h + lauxlib.h
 
 using namespace Subs;
 using namespace Hyprutils::String;
@@ -419,6 +423,107 @@ static void scheduleChanged() {
     });
 }
 
+// ---------------------------------------------------------------- lua
+
+// With a Lua config, hyprctl dispatch and binds speak Lua, so the dispatchers are also exposed as
+// hl.plugin.hyprsubs.<action>(arg). Like hl.dsp.*, calling one returns a dispatcher:
+//   hl.bind("SUPER + 1", hl.plugin.hyprsubs.group(1))
+//   hl.dispatch(hl.plugin.hyprsubs.sub("next"))
+// The returned closure is plain Lua that looks the plugin up when it runs, so binds that outlive
+// the plugin (unload without a config reload) fail with an error instead of calling unloaded code.
+
+using ActionFn = std::function<SDispatchResult(std::string)>;
+
+static const std::vector<std::pair<std::string, ActionFn>> ACTIONS = {
+    {"group", [](std::string a) { return toGroup(a, false); }},
+    {"movegroup", [](std::string a) { return toGroup(a, true); }},
+    {"newsub", [](std::string a) { return toNewSub(a, false); }},
+    {"movenewsub", [](std::string a) { return toNewSub(a, true); }},
+    {"sub", [](std::string a) { return toSub(a, false); }},
+    {"movesub", [](std::string a) { return toSub(a, true); }},
+    {"groupcycle", [](std::string a) { return groupCycle(a); }},
+    {"rowmode", [](std::string a) { return rowMode(a); }},
+};
+
+static std::string luaArg(lua_State* L, int idx) {
+    if (lua_isnoneornil(L, idx))
+        return "";
+    if (lua_isinteger(L, idx))
+        return std::to_string(lua_tointeger(L, idx));
+    const char* s = lua_tostring(L, idx);
+    return s ? s : "";
+}
+
+// hl.plugin.hyprsubs.run(action, arg): runs an action now, returns { ok = bool, error = string? }
+static int luaRun(lua_State* L) {
+    const auto ACTION = luaArg(L, 1);
+    const auto IT     = std::ranges::find_if(ACTIONS, [&](const auto& a) { return a.first == ACTION; });
+
+    const auto RES = IT == ACTIONS.end() ? err(std::format("hyprsubs: unknown action \"{}\"", ACTION)) : IT->second(luaArg(L, 2));
+
+    lua_newtable(L);
+    lua_pushboolean(L, RES.success);
+    lua_setfield(L, -2, "ok");
+    if (!RES.success) {
+        lua_pushstring(L, RES.error.c_str());
+        lua_setfield(L, -2, "error");
+    }
+    return 1;
+}
+
+static constexpr std::string_view DISPATCHER_CHUNK = R"(
+local action, arg = ...
+return function()
+    local p = hl.plugin.hyprsubs
+    if not p or not p.run then
+        error("hyprsubs is not loaded", 0)
+    end
+    local res = p.run(action, arg)
+    if not res.ok then
+        error(res.error, 0) -- like hl.dsp.*: hyprctl dispatch / hl.dispatch report it
+    end
+    return res
+end
+)";
+
+template <size_t I>
+static int luaMakeDispatcher(lua_State* L) {
+    const auto ARG = luaArg(L, 1);
+
+    if (luaL_loadbuffer(L, DISPATCHER_CHUNK.data(), DISPATCHER_CHUNK.size(), "=hyprsubs") != LUA_OK)
+        return lua_error(L);
+
+    lua_pushstring(L, ACTIONS[I].first.c_str());
+    lua_pushstring(L, ARG.c_str());
+    lua_call(L, 2, 1);
+    return 1;
+}
+
+template <size_t... I>
+static void registerLuaDispatchers(HANDLE handle, std::index_sequence<I...>) {
+    (HyprlandAPI::addLuaFunction(handle, "hyprsubs", ACTIONS[I].first, &luaMakeDispatcher<I>), ...);
+}
+
+// hl.plugin.hyprsubs.state(): the hyprctl hyprsubs -j JSON as a string
+static int luaState(lua_State* L) {
+    lua_pushstring(L, stateJson(false).c_str());
+    return 1;
+}
+
+static void registerLua(HANDLE handle) {
+    if (!Config::mgr() || Config::mgr()->type() != Config::CONFIG_LUA)
+        return;
+
+    registerLuaDispatchers(handle, std::make_index_sequence<8>{});
+    HyprlandAPI::addLuaFunction(handle, "hyprsubs", "run", &luaRun);
+    HyprlandAPI::addLuaFunction(handle, "hyprsubs", "state", &luaState);
+
+    // hl.plugin.hyprsubs only exists from now on. Binds and options guarded with
+    // `if hl.plugin.hyprsubs then` were skipped when the config last ran, so run it again.
+    // (hl.plugin.load already reloads after loading; this covers hyprpm / hyprctl plugin load.)
+    g_pEventLoopManager->doLater([] { HyprlandAPI::reloadConfig(); });
+}
+
 // ---------------------------------------------------------------- init
 
 void Cfg::registerValues(HANDLE handle) {
@@ -511,14 +616,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_pSubSwipe = makeUnique<CSubSwipe>();
 
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:group", [](std::string a) { return toGroup(a, false); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:movegroup", [](std::string a) { return toGroup(a, true); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:newsub", [](std::string a) { return toNewSub(a, false); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:movenewsub", [](std::string a) { return toNewSub(a, true); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:sub", [](std::string a) { return toSub(a, false); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:movesub", [](std::string a) { return toSub(a, true); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:groupcycle", [](std::string a) { return groupCycle(a); });
-    HyprlandAPI::addDispatcherV2(handle, "hyprsubs:rowmode", [](std::string a) { return rowMode(a); });
+    // hyprlang config: hyprsubs:<action> dispatchers
+    for (const auto& [name, fn] : ACTIONS) {
+        HyprlandAPI::addDispatcherV2(handle, "hyprsubs:" + name, fn);
+    }
+
+    // lua config: hl.plugin.hyprsubs.<action>(arg)
+    registerLua(handle);
 
     g_hyprctlCommand = HyprlandAPI::registerHyprCtlCommand(handle, SHyprCtlCommand{.name = "hyprsubs", .exact = true, .fn = stateQuery});
 
