@@ -22,6 +22,7 @@
 #include <hyprutils/string/VarList.hpp>
 
 #include <algorithm>
+#include <dlfcn.h>
 #include <format>
 
 using namespace Subs;
@@ -445,7 +446,12 @@ void Cfg::registerValues(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(handle, verticalDistance);
 }
 
-static void* findFunction(const std::string& name, const std::string& demangled) {
+// dlsym on the exact symbol first: findFunctionsByName shells out to nm / llvm-nm,
+// which isn't installed everywhere.
+static void* findFunction(const char* mangled, const std::string& name, const std::string& demangled) {
+    if (void* addr = dlsym(RTLD_DEFAULT, mangled))
+        return addr;
+
     for (const auto& fn : HyprlandAPI::findFunctionsByName(PHANDLE, name)) {
         if (fn.demangled.starts_with(demangled))
             return fn.address;
@@ -475,22 +481,28 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     struct SHookSpec {
         CFunctionHook** hook;
+        const char*     mangled;
         const char*     name;
         const char*     demangled;
         void*           destination;
     };
 
     const SHookSpec HOOKS[] = {
-        {&g_pSwipeBeginHook, "begin", "CWorkspaceSwipeGesture::begin(", (void*)&hkSwipeBegin},
-        {&g_pSwipeUpdateHook, "update", "CWorkspaceSwipeGesture::update(", (void*)&hkSwipeUpdate},
-        {&g_pSwipeEndHook, "end", "CWorkspaceSwipeGesture::end(", (void*)&hkSwipeEnd},
-        {&g_pStartAnimHook, "startAnimation", "Animation::Workspace::startAnimation(", (void*)&hkStartAnimation},
+        {&g_pSwipeBeginHook, "_ZN22CWorkspaceSwipeGesture5beginERKN16ITrackpadGesture21STrackpadGestureBeginE", "begin", "CWorkspaceSwipeGesture::begin(",
+         (void*)&hkSwipeBegin},
+        {&g_pSwipeUpdateHook, "_ZN22CWorkspaceSwipeGesture6updateERKN16ITrackpadGesture22STrackpadGestureUpdateE", "update", "CWorkspaceSwipeGesture::update(",
+         (void*)&hkSwipeUpdate},
+        {&g_pSwipeEndHook, "_ZN22CWorkspaceSwipeGesture3endERKN16ITrackpadGesture19STrackpadGestureEndE", "end", "CWorkspaceSwipeGesture::end(", (void*)&hkSwipeEnd},
+        {&g_pStartAnimHook,
+         "_ZN9Animation9Workspace14startAnimationEN9Hyprutils6Memory14CSharedPointerI10CWorkspaceEENS0_14eAnimationTypeEbbSt8optionalINSt7__cxx1112basic_"
+         "stringIcSt11char_traitsIcESaIcEEEE",
+         "startAnimation", "Animation::Workspace::startAnimation(", (void*)&hkStartAnimation},
     };
 
     for (const auto& h : HOOKS) {
-        const auto ADDR = findFunction(h.name, h.demangled);
+        const auto ADDR = findFunction(h.mangled, h.name, h.demangled);
         if (!ADDR)
-            fail(std::format("couldn't find {}", h.demangled));
+            fail(std::format("couldn't find {}) in Hyprland. hyprsubs targets Hyprland v0.56.2; check `hyprctl version`", h.demangled));
 
         *h.hook = HyprlandAPI::createFunctionHook(handle, ADDR, h.destination);
         if (!*h.hook || !(*h.hook)->hook())
