@@ -14,16 +14,62 @@ Horizontal movement switches groups. Vertical movement switches subs inside the 
 
 > Status: v1 implemented, keyboard dispatchers tested; trackpad swipes still need real-hardware testing. Target: Hyprland **v0.56.2** (`efb50993780079460b0cbed1363e2166a2de1d9f`).
 
-## Build and load
+## Install
 
-Needs the Hyprland headers matching your running Hyprland (`pkg-config --modversion hyprland`).
+hyprsubs is a compiled plugin: it has to be built against the same Hyprland version you're running, and rebuilt whenever Hyprland updates. It refuses to load if the versions don't match. Tested on Hyprland **v0.56.2**.
+
+### With hyprpm (recommended)
+
+`hyprpm` is Hyprland's plugin manager. It ships with Hyprland on most distros. It clones, builds, and rebuilds the plugin after Hyprland updates.
+
+```bash
+hyprpm update                                          # fetch headers for your Hyprland version
+hyprpm add https://github.com/0TrashPanda/hyprsubs     # clone + build
+hyprpm enable hyprsubs
+```
+
+To load it at login, add this to `hyprland.conf`:
+
+```ini
+exec-once = hyprpm reload -n
+```
+
+After a Hyprland update, run `hyprpm update` to rebuild. It also pulls new hyprsubs commits.
+
+### Manually
+
+Needs `make`, `g++`, `pkg-config` and the Hyprland headers matching your running Hyprland (`pkg-config --modversion hyprland` should print the same version as `hyprctl version`). Keep the clone somewhere stable, since Hyprland loads the `.so` from that path:
+
+```bash
+git clone https://github.com/0TrashPanda/hyprsubs ~/.local/src/hyprsubs
+cd ~/.local/src/hyprsubs
+make
+```
+
+Load it at startup (absolute path) in `hyprland.conf`:
+
+```ini
+plugin = /home/<you>/.local/src/hyprsubs/hyprsubs.so
+```
+
+To update, and after every Hyprland update:
+
+```bash
+cd ~/.local/src/hyprsubs && git pull && make
+hyprctl plugin unload "$PWD/hyprsubs.so" && hyprctl plugin load "$PWD/hyprsubs.so"
+```
+
+### Then
+
+1. Set up binds and gestures: see [Keyboard](#keyboard), [Configuration](#configuration) and [Migration from a stock config](#migration-from-a-stock-config).
+2. Optional: the DMS bar widget, [hyprsubs-dms](https://github.com/0TrashPanda/hyprsubs-dms).
+
+### Development
 
 ```bash
 make
 hyprctl plugin load "$PWD/hyprsubs.so"
 ```
-
-Or load it at startup with `plugin = /path/to/hyprsubs.so` in `hyprland.conf`.
 
 ---
 
