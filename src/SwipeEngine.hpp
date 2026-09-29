@@ -3,6 +3,7 @@
 #include "Subs.hpp"
 
 #include <hyprland/src/helpers/memory/Memory.hpp>
+#include <hyprland/src/helpers/signal/Signal.hpp>
 
 // Copy of Hyprland v0.56.2 CUnifiedWorkspaceSwipeGesture
 // (src/managers/input/UnifiedWorkspaceSwipeGesture.cpp) with three changes:
@@ -13,8 +14,9 @@
 // not workspace_swipe_create_new.
 class CSubSwipe {
   public:
-    // false if there is nothing to swipe to
-    bool begin(Subs::eAxis axis, bool rowMode);
+    // false if there is nothing to swipe to.
+    // carry: the focused window comes along (stays under the fingers, lands on the target).
+    bool begin(Subs::eAxis axis, bool rowMode, bool carry = false);
     void update(double delta);
     void end();
 
@@ -26,6 +28,8 @@ class CSubSwipe {
     void         computeTargets();
     int64_t      swipeDistance(int64_t native) const;
     void         slideBeginOnly(double swipeDistance, double xDistance, double yDistance);
+    void         compensateCarry();
+    void         stopCarry();
 
     PHLWORKSPACE  m_workspaceBegin = nullptr;
     PHLMONITORREF m_monitor;
@@ -44,6 +48,13 @@ class CSubSwipe {
     // that side's target doesn't exist yet and is created when the swipe commits
     bool          m_createLeft  = false;
     bool          m_createRight = false;
+
+    // carried window: every frame its m_floatingOffset cancels m_carryWs's slide offset, so it
+    // stays put on screen. Runs past the gesture until that workspace's animation settles.
+    bool                m_carryMode = false;
+    PHLWINDOWREF        m_carry;
+    PHLWORKSPACEREF     m_carryWs;
+    CHyprSignalListener m_carryFrame;
 };
 
 inline UP<CSubSwipe> g_pSubSwipe;

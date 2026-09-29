@@ -35,6 +35,12 @@ hl.config({
 hl.gesture({ fingers = 3, direction = "vertical",   action = "workspace" })
 hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })
 
+-- Same swipes with SUPER held: the focused window comes along to the target group / sub.
+-- (Any workspace swipe started with a modifier held does this; pick your own mods.)
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace", mods = "SUPER" })
+hl.gesture({ fingers = 3, direction = "vertical",   action = "workspace", mods = "SUPER" })
+hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace", mods = "SUPER" })
+
 -- SUPER + N                 go to group N (last-used sub), or cycle its subs if already there
 -- SUPER + SHIFT + N         move the focused window there
 -- SUPER + CTRL + N          new sub in group N

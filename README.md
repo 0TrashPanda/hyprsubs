@@ -90,7 +90,7 @@ Both install methods put a default config next to your Hyprland config (`~/.conf
 If both exist, both are created. If neither does, the Lua one is. Each contains:
 
 - all [plugin options](#configuration) at their defaults,
-- the vertical and 4-finger gestures,
+- the vertical and 4-finger gestures, plus SUPER + swipe versions that [take the focused window along](#taking-the-focused-window-along),
 - the `SUPER (+ SHIFT / CTRL) + 1–9` binds from [Keyboard](#keyboard), each replacing (unbinding) whatever the key did before.
 
 Notes:
@@ -197,6 +197,28 @@ All native behavior, reused as-is:
 - Commit vs snap-back is decided by `gestures:workspace_swipe_cancel_ratio` (distance) and `gestures:workspace_swipe_min_speed_to_force` (flick speed).
 - The finish animation (commit or snap-back) stays on the swipe axis.
 - On a wrap, the target slides in from the side you are swiping toward. It never animates backwards across the skipped workspaces.
+
+### Taking the focused window along
+
+Swipe with **SUPER** held and the focused window comes with you: it stays under your fingers while the workspaces slide behind it, and lands on the target group / sub (focused). Snapping back leaves it where it was. Combined with `create` edges, this moves a window into a brand-new group or sub in one swipe.
+
+This works for any workspace swipe started with a modifier held. Hyprland only runs a gesture when exactly its modifiers are held, so the modifier versions need their own gesture lines (the [default config](#default-config) has them):
+
+```lua
+-- hyprland.lua
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace", mods = "SUPER" })
+hl.gesture({ fingers = 3, direction = "vertical",   action = "workspace", mods = "SUPER" })
+hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace", mods = "SUPER" })
+```
+
+```ini
+# hyprland.conf
+gesture = 3, horizontal, mod: SUPER, workspace
+gesture = 3, vertical, mod: SUPER, workspace
+gesture = 4, horizontal, mod: SUPER, workspace
+```
+
+Pinned windows aren't carried.
 
 ### Swiping past the end
 
@@ -451,7 +473,6 @@ The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwi
 
 - Multi-monitor awareness (per-monitor groups). v1 acts on the focused monitor only.
 - Overview / grid view of all groups and subs.
-- Dragging windows between subs with the trackpad.
 
 ## Migration from a stock config
 

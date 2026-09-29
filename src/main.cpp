@@ -14,6 +14,7 @@
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/managers/EventManager.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.hpp>
 #include <hyprland/src/output/Monitor.hpp>
@@ -79,7 +80,11 @@ static void hkSwipeBegin(CWorkspaceSwipeGesture* thisptr, const ITrackpadGesture
     const uint32_t FINGERS = e.swipe ? e.swipe->fingers : 3;
     const bool     ROWMODE = *axis == AXIS_GROUP && (FINGERS >= 4 || (g_state.m_rowMode && Cfg::rowModeFor3Finger()));
 
-    g_pSubSwipe->begin(*axis, ROWMODE);
+    // gestures only match with exactly their modifiers held, so a modifier here means the user
+    // set up a modifier + swipe workspace gesture: bring the focused window along
+    const bool CARRY = g_pInputManager->getModsFromAllKBs() != 0;
+
+    g_pSubSwipe->begin(*axis, ROWMODE, CARRY);
 }
 
 static void hkSwipeUpdate(CWorkspaceSwipeGesture* thisptr, const ITrackpadGesture::STrackpadGestureUpdate& e) {

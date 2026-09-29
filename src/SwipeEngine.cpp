@@ -11,6 +11,9 @@
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 
 #include <algorithm>
 
@@ -129,7 +132,30 @@ void CSubSwipe::slideBeginOnly(double swipeDistance, double xDistance, double yD
     m_workspaceBegin->updateWindowDecos();
 }
 
-bool CSubSwipe::begin(eAxis axis, bool rowMode) {
+void CSubSwipe::compensateCarry() {
+    const auto WINDOW = m_carry.lock();
+    const auto WS     = m_carryWs.lock();
+
+    if (!WINDOW || !WS || WINDOW->m_workspace != WS) {
+        stopCarry();
+        return;
+    }
+
+    WINDOW->m_floatingOffset = -WS->m_renderOffset->value();
+
+    if (!isGestureInProgress() && !WS->m_renderOffset->isBeingAnimated())
+        stopCarry();
+}
+
+void CSubSwipe::stopCarry() {
+    if (const auto WINDOW = m_carry.lock())
+        WINDOW->m_floatingOffset = {};
+
+    m_carry.reset();
+    m_carryWs.reset();
+}
+
+bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry) {
     if (isGestureInProgress())
         return false;
 
@@ -146,6 +172,7 @@ bool CSubSwipe::begin(eAxis axis, bool rowMode) {
     m_monitor        = Desktop::focusState()->monitor();
     m_axis           = axis;
     m_rowMode        = rowMode;
+    m_carryMode      = carry;
 
     computeTargets();
 
@@ -160,6 +187,21 @@ bool CSubSwipe::begin(eAxis axis, bool rowMode) {
     m_delta       = 0;
     m_avgSpeed    = 0;
     m_speedPoints = 0;
+
+    stopCarry(); // a previous carry still settling
+    if (carry) {
+        const auto WINDOW = Desktop::focusState()->window();
+        if (WINDOW && WINDOW->m_workspace == PWORKSPACE && !WINDOW->m_pinned) {
+            m_carry   = WINDOW;
+            m_carryWs = PWORKSPACE;
+        }
+
+        if (!m_carryFrame)
+            m_carryFrame = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR) {
+                if (m_carry)
+                    compensateCarry();
+            });
+    }
 
     const auto FSWINDOW         = Fullscreen::controller()->getFullscreenWindow(PWORKSPACE);
     const auto INTERNAL_FS_MODE = FSWINDOW ? Fullscreen::controller()->getFullscreenModes(FSWINDOW).internal : Fullscreen::FSMODE_NONE;
@@ -289,8 +331,9 @@ void CSubSwipe::update(double delta) {
         if (abs(m_delta) >= SWIPEDISTANCE) {
             const auto AXIS    = m_axis;
             const auto ROWMODE = m_rowMode;
+            const auto CARRY   = m_carryMode;
             end();
-            begin(AXIS, ROWMODE);
+            begin(AXIS, ROWMODE, CARRY);
         }
     }
 }
@@ -363,6 +406,12 @@ void CSubSwipe::end() {
 
         const auto RENDEROFFSET = PTARGET->m_renderOffset->value();
 
+        // the carried window moves first, so it's already on the target when it becomes active
+        if (const auto WINDOW = m_carry.lock()) {
+            (void)Config::Actions::moveToWorkspace(PTARGET, true, WINDOW);
+            m_carryWs = PTARGET;
+        }
+
         // a row-mode group swipe keeps the remembered row
         g_state.m_keepRow = m_axis == AXIS_GROUP && m_rowMode;
         m_monitor->changeWorkspace(PTARGET);
@@ -397,6 +446,9 @@ void CSubSwipe::end() {
     m_initialDirection = 0;
 
     g_pInputManager->refocus();
+
+    if (const auto WINDOW = m_carry.lock(); WINDOW && WINDOW->m_workspace == pSwitchedTo)
+        Desktop::focusState()->fullWindowFocus(WINDOW, Desktop::FOCUS_REASON_KEYBIND);
 
     // apply alpha
     if (pSwitchedTo) {
