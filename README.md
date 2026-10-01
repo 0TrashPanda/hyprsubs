@@ -200,7 +200,7 @@ All native behavior, reused as-is:
 
 ### Taking the focused window along
 
-Swipe with **SUPER** held and the focused window comes with you: it stays under your fingers while the workspaces slide behind it, and lands on the target group / sub (focused). Snapping back leaves it where it was. Combined with `create` edges, this moves a window into a brand-new group or sub in one swipe.
+Swipe with **SUPER** held and the focused window comes with you: it stays under your fingers while the workspaces slide behind it, and lands on the target group / sub (focused). Snapping back leaves it where it was. Horizontally it steps to the adjacent group number, so empty groups aren't skipped (missing ones are created). Vertically, combined with a `create` sub edge, it moves a window into a brand-new sub in one swipe.
 
 This works for any workspace swipe started with a modifier held. Hyprland only runs a gesture when exactly its modifiers are held, so the modifier versions need their own gesture lines (the [default config](#default-config) has them):
 

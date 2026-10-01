@@ -47,7 +47,7 @@ void CSubSwipe::computeTargets() {
     const bool CANCREATE = EDGE == Cfg::EDGE_CREATE && m_workspaceBegin->getWindowCount() > 0;
 
     WORKSPACEID prev = WORKSPACE_INVALID, next = WORKSPACE_INVALID;
-    bool        createNext = false;
+    bool        createPrev = false, createNext = false;
 
     if (m_axis == AXIS_SUB) {
         const auto IT = MAP.find(POS->group);
@@ -72,6 +72,20 @@ void CSubSwipe::computeTargets() {
             next       = encode(POS->group, SUBS.back() + 1);
             createNext = true;
         }
+    } else if (m_carry) {
+        // carrying a window: step to the adjacent group number, empty or not yet existing
+        const auto TARGET = [&](int g, bool& create) {
+            if (MAP.contains(g))
+                return encode(g, g_state.entrySub(g, m_rowMode, MAP));
+
+            create = true;
+            return encode(g, m_rowMode ? g_state.m_row : 1);
+        };
+
+        if (POS->group > 1)
+            prev = TARGET(POS->group - 1, createPrev);
+        if (POS->group < MAX_GROUP)
+            next = TARGET(POS->group + 1, createNext);
     } else {
         std::vector<int> groups;
         for (const auto& [g, _] : MAP) {
@@ -110,12 +124,14 @@ void CSubSwipe::computeTargets() {
 
     // "left" is drawn left / above, "right" right / below
     if (m_axis == AXIS_SUB && Cfg::subsAbove()) {
-        m_idLeft     = next;
-        m_idRight    = prev;
-        m_createLeft = createNext;
+        m_idLeft      = next;
+        m_idRight     = prev;
+        m_createLeft  = createNext;
+        m_createRight = createPrev;
     } else {
         m_idLeft      = prev;
         m_idRight     = next;
+        m_createLeft  = createPrev;
         m_createRight = createNext;
     }
 }
@@ -174,9 +190,19 @@ bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry) {
     m_rowMode        = rowMode;
     m_carryMode      = carry;
 
+    stopCarry(); // a previous carry still settling
+    if (carry) {
+        const auto WINDOW = Desktop::focusState()->window();
+        if (WINDOW && WINDOW->m_workspace == PWORKSPACE && !WINDOW->m_pinned) {
+            m_carry   = WINDOW;
+            m_carryWs = PWORKSPACE;
+        }
+    }
+
     computeTargets();
 
     if (m_idLeft == WORKSPACE_INVALID && m_idRight == WORKSPACE_INVALID) {
+        stopCarry();
         m_workspaceBegin = nullptr;
         return false;
     }
@@ -188,14 +214,7 @@ bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry) {
     m_avgSpeed    = 0;
     m_speedPoints = 0;
 
-    stopCarry(); // a previous carry still settling
     if (carry) {
-        const auto WINDOW = Desktop::focusState()->window();
-        if (WINDOW && WINDOW->m_workspace == PWORKSPACE && !WINDOW->m_pinned) {
-            m_carry   = WINDOW;
-            m_carryWs = PWORKSPACE;
-        }
-
         if (!m_carryFrame)
             m_carryFrame = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR) {
                 if (m_carry)
