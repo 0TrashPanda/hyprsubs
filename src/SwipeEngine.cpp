@@ -63,6 +63,10 @@ void CSubSwipe::computeTargets() {
             prev = encode(POS->group, *std::prev(HERE));
         else if (EDGE == Cfg::EDGE_WRAP && SUBS.size() > 1)
             prev = encode(POS->group, SUBS.back());
+        else if (CANCREATE && POS->sub > 1) {
+            prev       = encode(POS->group, POS->sub - 1);
+            createPrev = true;
+        }
 
         if (std::next(HERE) != SUBS.end())
             next = encode(POS->group, *std::next(HERE));
@@ -108,6 +112,16 @@ void CSubSwipe::computeTargets() {
 
         if (left)
             prev = encode(*left, g_state.entrySub(*left, m_rowMode, MAP));
+        else if (CANCREATE) {
+            // highest unused group before this one
+            for (int g = POS->group - 1; g >= 1; --g) {
+                if (!MAP.contains(g)) {
+                    prev       = encode(g, m_rowMode ? g_state.m_row : 1);
+                    createPrev = true;
+                    break;
+                }
+            }
+        }
         if (right)
             next = encode(*right, g_state.entrySub(*right, m_rowMode, MAP));
         else if (CANCREATE) {
