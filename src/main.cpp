@@ -77,14 +77,16 @@ static void hkSwipeBegin(CWorkspaceSwipeGesture* thisptr, const ITrackpadGesture
     if (g_pSessionLockManager->isSessionLocked() || g_pSubSwipe->isGestureInProgress())
         return;
 
-    const uint32_t FINGERS = e.swipe ? e.swipe->fingers : 3;
-    const bool     ROWMODE = *axis == AXIS_GROUP && (FINGERS >= 4 || (g_state.m_rowMode && Cfg::rowModeFor3Finger()));
+    const uint32_t FINGERS   = e.swipe ? e.swipe->fingers : 3;
+    const bool     ROWMODE   = *axis == AXIS_GROUP && g_state.m_rowMode && Cfg::rowModeFor3Finger();
+    // 4 fingers: like 3, but empty groups aren't skipped
+    const bool     ALLGROUPS = FINGERS >= 4;
 
     // gestures only match with exactly their modifiers held, so a modifier here means the user
     // set up a modifier + swipe workspace gesture: bring the focused window along
     const bool CARRY = g_pInputManager->getModsFromAllKBs() != 0;
 
-    g_pSubSwipe->begin(*axis, ROWMODE, CARRY);
+    g_pSubSwipe->begin(*axis, ROWMODE, CARRY, ALLGROUPS);
 }
 
 static void hkSwipeUpdate(CWorkspaceSwipeGesture* thisptr, const ITrackpadGesture::STrackpadGestureUpdate& e) {
@@ -533,7 +535,7 @@ static void registerLua(HANDLE handle) {
 
 void Cfg::registerValues(HANDLE handle) {
     rowMode        = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:row_mode", "row mode toggle state at startup", false);
-    rowMode3Finger = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:row_mode_3finger", "3-finger horizontal swipe uses row mode while the toggle is on", false);
+    rowMode3Finger = makeShared<Config::Values::CBoolValue>("plugin:hyprsubs:row_mode_3finger", "horizontal swipes use row mode while the toggle is on", false);
     const auto EDGEVALIDATOR = [](const std::string& v) -> std::expected<void, std::string> {
         if (v == "stop" || v == "wrap" || v == "create")
             return {};

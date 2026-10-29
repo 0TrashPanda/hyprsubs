@@ -16,7 +16,8 @@ class CSubSwipe {
   public:
     // false if there is nothing to swipe to.
     // carry: the focused window comes along (stays under the fingers, lands on the target).
-    bool begin(Subs::eAxis axis, bool rowMode, bool carry = false);
+    // allGroups: step to the adjacent group number on the same sub, instead of skipping groups without windows.
+    bool begin(Subs::eAxis axis, bool rowMode, bool carry = false, bool allGroups = false);
     void update(double delta);
     void end();
 
@@ -40,6 +41,7 @@ class CSubSwipe {
 
     Subs::eAxis   m_axis    = Subs::AXIS_GROUP;
     bool          m_rowMode = false;
+    bool          m_allGroups = false;
 
     // "left" = previous group / sub, "right" = next
     WORKSPACEID   m_idLeft  = WORKSPACE_INVALID;

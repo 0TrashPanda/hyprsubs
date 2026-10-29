@@ -179,8 +179,9 @@ Handled natively by Hyprland: the first ~5px of movement decides horizontal or v
 
 ### Horizontal: switch group
 
-- Target: the next / previous group **that has at least one window**. Empty groups are skipped, like the native swipe.
-- Lands on that group's last-used sub (or the same sub index in [row mode](#row-mode)).
+- Target (3 fingers): the next / previous group **that has at least one window**. Empty groups are skipped, like the native swipe.
+- Target (4 fingers): the adjacent group number on the **same sub** (2.2 → 1.2), **empty or not**. A missing target is created when the swipe commits.
+- 3 fingers land on that group's last-used sub (or the same sub index in [row mode](#row-mode)).
 - Past the first / last group: see [Swiping past the end](#swiping-past-the-end) (`swipe_group_edge`, default `create`).
 
 ### Vertical: switch sub
@@ -251,13 +252,12 @@ In row mode, horizontal moves keep the **same sub index** instead of using last-
 
 ### Triggers
 
-- **4-finger horizontal swipe:** always row mode.
 - **Toggle** (`rowmode` [dispatcher](#dispatchers)): while on, it changes the keyboard:
   - `SUPER + N` from another group goes to group N at the current row.
   - `SUPER + SHIFT + N` from another group moves the window to group N at the current row.
   - `SUPER + N` / `SUPER + SHIFT + N` inside group N still cycle subs, unchanged.
   - `SUPER + CTRL (+ SHIFT) + N` creates the new sub at the current row if that slot is free, otherwise the lowest free sub.
-- **3-finger horizontal swipe:** row mode only when the toggle is on **and** `row_mode_3finger = true`.
+- **Horizontal swipe (3 or 4 fingers):** row mode only when the toggle is on **and** `row_mode_3finger = true`.
 
 ### Remembered row
 
@@ -384,7 +384,7 @@ Swipe feel is configured with Hyprland's native options:
 -- hyprland.lua
 hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 hl.gesture({ fingers = 3, direction = "vertical",   action = "workspace" })
-hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" }) -- row mode swipe
+hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" }) -- like 3 fingers, but lands on empty groups
 
 hl.config({
     gestures = {
@@ -399,7 +399,7 @@ hl.config({
 # hyprland.conf
 gesture = 3, horizontal, workspace
 gesture = 3, vertical, workspace
-gesture = 4, horizontal, workspace   # row mode swipe
+gesture = 4, horizontal, workspace   # like 3 fingers, but lands on empty groups
 
 gestures {
     workspace_swipe_cancel_ratio = 0.5
@@ -416,7 +416,7 @@ hl.config({
     plugin = {
         hyprsubs = {
             row_mode                = false,    -- toggle state at startup
-            row_mode_3finger        = false,    -- 3-finger horizontal also uses row mode while the toggle is on
+            row_mode_3finger        = false,    -- horizontal swipes also use row mode while the toggle is on
             swipe_group_edge        = "create", -- past the first / last group: "stop", "wrap" or "create"
             swipe_sub_edge          = "stop",   -- past the first / last sub: "stop", "wrap" or "create"
             subs_above              = false,    -- higher subs sit above the current one instead of below
@@ -431,7 +431,7 @@ hl.config({
 plugin {
     hyprsubs {
         row_mode = false            # toggle state at startup
-        row_mode_3finger = false    # 3-finger horizontal also uses row mode while the toggle is on
+        row_mode_3finger = false    # horizontal swipes also use row mode while the toggle is on
         swipe_group_edge = create   # past the first / last group: stop, wrap or create
         swipe_sub_edge = stop       # past the first / last sub: stop, wrap or create
         subs_above = false          # higher subs sit above the current one instead of below
@@ -452,7 +452,7 @@ The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp`
 2. **ID order checks removed.** The native code refuses a target that is on the numerically wrong side (left must be a lower ID, right a higher one). With `(sub − 1) × 100 + group` that doesn't hold horizontally, so those checks go.
 3. **Axis from the gesture.** The native code decides horizontal vs vertical drawing from the workspace's animation style (`slidevert`). The copy uses the gesture direction passed to `begin()` instead.
 
-`begin()` also receives the swipe event, which carries the finger count: 4 fingers → row mode.
+`begin()` also receives the swipe event, which carries the finger count: 4 fingers → step to the adjacent group number on the same sub, without skipping empty ones.
 
 ### Keyboard: animation direction
 

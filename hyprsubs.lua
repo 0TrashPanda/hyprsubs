@@ -19,7 +19,7 @@ hl.config({
     plugin = {
         hyprsubs = {
             row_mode                = false,    -- row-mode toggle state at startup
-            row_mode_3finger        = false,    -- 3-finger horizontal swipe also uses row mode while the toggle is on
+            row_mode_3finger        = false,    -- horizontal swipes also use row mode while the toggle is on
             swipe_group_edge        = "create", -- past the first / last group: "stop", "wrap" or "create"
             swipe_sub_edge          = "stop",   -- past the first / last sub: "stop", "wrap" or "create"
             subs_above              = false,    -- higher subs sit above the current one instead of below
@@ -28,7 +28,8 @@ hl.config({
     },
 })
 
--- Trackpad: 3 fingers horizontal = groups, vertical = subs, 4 fingers horizontal = row mode.
+-- Trackpad: 3 fingers horizontal = groups, vertical = subs, 4 fingers horizontal = groups,
+-- including empty ones.
 -- Hyprland's default config already has the 3-finger horizontal gesture (defining it twice is a
 -- config error), so it's commented out here. Uncomment it if your hyprland.lua doesn't have it.
 -- hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })

@@ -76,9 +76,15 @@ void CSubSwipe::computeTargets() {
             next       = encode(POS->group, SUBS.back() + 1);
             createNext = true;
         }
-    } else if (m_carry) {
-        // carrying a window: step to the adjacent group number, empty or not yet existing
+    } else if (m_carry || m_allGroups) {
+        // carrying a window or a 4-finger swipe: step to the adjacent group number, empty or not yet existing
         const auto TARGET = [&](int g, bool& create) {
+            // 4 fingers: straight across the grid, same sub number (2.2 -> 1.2)
+            if (m_allGroups) {
+                create = !MAP.contains(g) || !std::ranges::contains(MAP.at(g), POS->sub);
+                return encode(g, POS->sub);
+            }
+
             if (MAP.contains(g))
                 return encode(g, g_state.entrySub(g, m_rowMode, MAP));
 
@@ -185,7 +191,7 @@ void CSubSwipe::stopCarry() {
     m_carryWs.reset();
 }
 
-bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry) {
+bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry, bool allGroups) {
     if (isGestureInProgress())
         return false;
 
@@ -203,6 +209,7 @@ bool CSubSwipe::begin(eAxis axis, bool rowMode, bool carry) {
     m_axis           = axis;
     m_rowMode        = rowMode;
     m_carryMode      = carry;
+    m_allGroups      = allGroups;
 
     stopCarry(); // a previous carry still settling
     if (carry) {
@@ -365,8 +372,9 @@ void CSubSwipe::update(double delta) {
             const auto AXIS    = m_axis;
             const auto ROWMODE = m_rowMode;
             const auto CARRY   = m_carryMode;
+            const auto ALL     = m_allGroups;
             end();
-            begin(AXIS, ROWMODE, CARRY);
+            begin(AXIS, ROWMODE, CARRY, ALL);
         }
     }
 }
