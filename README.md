@@ -12,11 +12,11 @@ sub 3  │                            ...
 
 Horizontal movement switches groups. Vertical movement switches subs inside the current group.
 
-> Status: v1 implemented, keyboard dispatchers tested; trackpad swipes still need real-hardware testing. Target: Hyprland **v0.56.2** (`efb50993780079460b0cbed1363e2166a2de1d9f`).
+> Status: v1 implemented, keyboard dispatchers tested; trackpad swipes still need real-hardware testing. Target: Hyprland **v0.57.0** (`0aa6745f705f2c4b0a5004eb019ef76e5bbdb426`). On v0.56.2, hyprpm builds the last 0.56 version automatically (see [With hyprpm](#with-hyprpm-recommended)).
 
 ## Install
 
-hyprsubs is a compiled plugin: it has to be built against the same Hyprland version you're running, and rebuilt whenever Hyprland updates. It refuses to load if the versions don't match. Tested on Hyprland **v0.56.2**.
+hyprsubs is a compiled plugin: it has to be built against the same Hyprland version you're running, and rebuilt whenever Hyprland updates. It refuses to load if the versions don't match. Built for Hyprland **v0.57.0**; v0.56.2 is still covered through hyprpm's commit pin.
 
 Both of Hyprland's config formats are supported. The examples show the **Lua config** (`hyprland.lua`) first, then the hyprlang equivalent (`hyprland.conf`).
 
@@ -58,6 +58,8 @@ cd ~/.local/src/hyprsubs
 make
 make config     # creates ~/.config/hypr/hyprsubs.lua / .conf, see Default config
 ```
+
+Still on Hyprland v0.56.2? Build the last version for it instead: `git checkout c54b3b3` before `make`.
 
 Load it at startup (absolute path):
 
@@ -442,13 +444,13 @@ plugin {
 
 ## Implementation approach
 
-Checked against the v0.56.2 source.
+Checked against the v0.57.0 source.
 
 ### Trackpad: copied swipe engine
 
-The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp` (~360 lines). The plugin ships a copy of it and hooks `CWorkspaceSwipeGesture::begin / update / end` (`src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.cpp`) to drive the copy instead of the global `g_pUnifiedWorkspaceSwipe`. Tracking, commit ratio, flick speed and snap-back math stay verbatim. Three changes in the copy:
+The native engine lives in `src/managers/input/UnifiedWorkspaceSwipeGesture.cpp` (~520 lines). The plugin ships a copy of it and hooks `CWorkspaceSwipeGesture::begin / update / end` (`src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.cpp`) to drive the copy instead of the global `g_pUnifiedWorkspaceSwipe`. Tracking, commit ratio, flick speed and snap-back math stay verbatim. Three changes in the copy:
 
-1. **Targets.** The native code gets neighbors from `getWorkspaceIDNameFromString("m-1" / "m+1")`. The copy asks the plugin instead (neighbor group or neighbor sub, row mode or not).
+1. **Targets.** The native code gets neighbors from the workspace resolver (`"m-1"` / `"m+1"`). The copy asks the plugin instead (neighbor group or neighbor sub, row mode or not).
 2. **ID order checks removed.** The native code refuses a target that is on the numerically wrong side (left must be a lower ID, right a higher one). With `(sub − 1) × 100 + group` that doesn't hold horizontally, so those checks go.
 3. **Axis from the gesture.** The native code decides horizontal vs vertical drawing from the workspace's animation style (`slidevert`). The copy uses the gesture direction passed to `begin()` instead.
 
@@ -467,7 +469,9 @@ A switch counts as the plugin's own from the moment one of its dispatchers calls
 
 ### Maintenance
 
-The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwipeGesture.cpp` (it already differs between v0.56.2 and current main). Everything else is a small set of hooks.
+The copied engine has to be re-synced when upstream changes `UnifiedWorkspaceSwipeGesture.cpp`. Everything else is a small set of hooks.
+
+When hyprsubs moves to a new Hyprland version, add the old version's Hyprland commit and the last hyprsubs commit that built on it to `commit_pins` in `hyprpm.toml`, so hyprpm keeps building a working version for people who haven't updated.
 
 ## Not in v1
 

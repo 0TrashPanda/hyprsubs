@@ -8,17 +8,17 @@
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/config/shared/animation/AnimationTree.hpp>
 #include <hyprland/src/animation/WorkspaceAnimationController.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
-#include <hyprland/src/managers/EventManager.hpp>
+#include <hyprland/src/ipc/s2/S2.hpp>
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/input/trackpad/gestures/WorkspaceSwipeGesture.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/state/WorkspaceState.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 
 #include <hyprutils/string/String.hpp>
 #include <hyprutils/string/VarList.hpp>
@@ -84,7 +84,7 @@ static void hkSwipeBegin(CWorkspaceSwipeGesture* thisptr, const ITrackpadGesture
 
     // gestures only match with exactly their modifiers held, so a modifier here means the user
     // set up a modifier + swipe workspace gesture: bring the focused window along
-    const bool CARRY = g_pInputManager->getModsFromAllKBs() != 0;
+    const bool CARRY = sc<bool>(g_pInputManager->getModsFromAllKBs());
 
     g_pSubSwipe->begin(*axis, ROWMODE, CARRY, ALLGROUPS);
 }
@@ -140,7 +140,7 @@ static std::optional<std::string> styleForAxis(const std::string& style, eAxis a
 }
 
 static void hkStartAnimation(PHLWORKSPACE ws, Animation::Workspace::eAnimationType type, bool left, bool instant, std::optional<std::string> style) {
-    if (g_pendingAnim.active && ws && !ws->m_isSpecialWorkspace && !instant) {
+    if (g_pendingAnim.active && ws && ws->type() != Workspace::eWorkspaceType::SPECIAL && !instant) {
         // the style the original would read after applying the workspaces{In,Out} config
         std::string current = style.value_or("");
         if (!style) {
@@ -186,9 +186,9 @@ static SDispatchResult go(int group, int sub, eAxis axis, bool forward, bool mov
     }
 
     const auto ID = encode(group, sub);
-    auto       ws = State::workspaceState()->query().id(ID).run();
+    auto       ws = workspaceFor(group, sub);
     if (!ws)
-        ws = State::workspaceState()->create(ID, MON->m_id);
+        ws = State::workspaceState()->createNumbered(Workspace::SWorkspaceNumberedID{ID}, MON);
     if (!ws)
         return err(std::format("hyprsubs: failed to create workspace {}", ID));
 
@@ -199,6 +199,9 @@ static SDispatchResult go(int group, int sub, eAxis axis, bool forward, bool mov
 
     g_pendingAnim.active = false;
     g_state.m_keepRow    = false;
+
+    // a newly created workspace announces itself once it's set up (safe to call again)
+    ws->ready();
 
     if (!RES)
         return err(RES.error().message);
@@ -380,8 +383,8 @@ static std::string stateJson(bool pretty) {
     return out;
 }
 
-static std::string stateQuery(eHyprCtlOutputFormat format, std::string) {
-    if (format == FORMAT_JSON)
+static IPC::Socket1::SResponse stateQuery(const IPC::Socket1::SRequest& req) {
+    if (req.format == IPC::Socket1::FORMAT_JSON)
         return stateJson(true);
 
     const auto MON = Desktop::focusState()->monitor();
@@ -392,7 +395,7 @@ static std::string stateQuery(eHyprCtlOutputFormat format, std::string) {
     if (CUR)
         out += std::format("current: {}.{} (workspace {})\n", CUR->group, CUR->sub, encode(CUR->group, CUR->sub));
     else
-        out += std::format("current: not a sub (workspace {})\n", MON && MON->m_activeWorkspace ? MON->m_activeWorkspace->m_name : "?");
+        out += std::format("current: not a sub (workspace {})\n", MON && MON->m_activeWorkspace ? MON->m_activeWorkspace->displayName() : "?");
 
     out += std::format("row mode: {}, row: {}\n", g_state.m_rowMode ? "on" : "off", g_state.m_row);
 
@@ -426,7 +429,7 @@ static void scheduleChanged() {
             return;
 
         g_lastEmitted = std::move(json);
-        g_pEventManager->postEvent(SHyprIPCEvent{"hyprsubs", g_lastEmitted});
+        IPC::Socket2::sock()->postEvent({.event = "hyprsubs", .data = g_lastEmitted});
     });
 }
 
@@ -579,7 +582,7 @@ static void fail(const std::string& msg) {
 static CHyprSignalListener              g_activeListener;
 static CHyprSignalListener              g_reloadListener;
 static std::vector<CHyprSignalListener> g_changeListeners;
-static SP<SHyprCtlCommand>  g_hyprctlCommand;
+static SP<IPC::Socket1::SCommand>       g_hyprctlCommand;
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
@@ -606,7 +609,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
          (void*)&hkSwipeUpdate},
         {&g_pSwipeEndHook, "_ZN22CWorkspaceSwipeGesture3endERKN16ITrackpadGesture19STrackpadGestureEndE", "end", "CWorkspaceSwipeGesture::end(", (void*)&hkSwipeEnd},
         {&g_pStartAnimHook,
-         "_ZN9Animation9Workspace14startAnimationEN9Hyprutils6Memory14CSharedPointerI10CWorkspaceEENS0_14eAnimationTypeEbbSt8optionalINSt7__cxx1112basic_"
+         "_ZN9Animation9Workspace14startAnimationEN9Hyprutils6Memory14CSharedPointerIN9Workspace12CHLWorkspaceEEENS0_14eAnimationTypeEbbSt8optionalINSt7__cxx1112basic_"
          "stringIcSt11char_traitsIcESaIcEEEE",
          "startAnimation", "Animation::Workspace::startAnimation(", (void*)&hkStartAnimation},
     };
@@ -614,7 +617,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     for (const auto& h : HOOKS) {
         const auto ADDR = findFunction(h.mangled, h.name, h.demangled);
         if (!ADDR)
-            fail(std::format("couldn't find {}) in Hyprland. hyprsubs targets Hyprland v0.56.2; check `hyprctl version`", h.demangled));
+            fail(std::format("couldn't find {}) in Hyprland. hyprsubs targets Hyprland v0.57.0; check `hyprctl version`", h.demangled));
 
         *h.hook = HyprlandAPI::createFunctionHook(handle, ADDR, h.destination);
         if (!*h.hook || !(*h.hook)->hook())
@@ -631,13 +634,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // lua config: hl.plugin.hyprsubs.<action>(arg)
     registerLua(handle);
 
-    g_hyprctlCommand = HyprlandAPI::registerHyprCtlCommand(handle, SHyprCtlCommand{.name = "hyprsubs", .exact = true, .fn = stateQuery});
+    g_hyprctlCommand = HyprlandAPI::registerHyprCtlCommand(handle, IPC::Socket1::SCommand{.name = "hyprsubs", .match = IPC::Socket1::COMMAND_MATCH_EXACT, .handler = stateQuery});
 
     g_activeListener = Event::bus()->m_events.workspace.active.listen([](PHLWORKSPACE ws) { g_state.onWorkspaceActive(ws); });
 
     auto& EV = Event::bus()->m_events;
     g_changeListeners.emplace_back(EV.workspace.active.listen([](PHLWORKSPACE) { scheduleChanged(); }));
-    g_changeListeners.emplace_back(EV.workspace.created.listen([](PHLWORKSPACEREF) { scheduleChanged(); }));
+    g_changeListeners.emplace_back(EV.workspace.createdLate.listen([](PHLWORKSPACEREF) { scheduleChanged(); }));
     g_changeListeners.emplace_back(EV.workspace.removed.listen([](PHLWORKSPACEREF) { scheduleChanged(); }));
     g_changeListeners.emplace_back(EV.workspace.moveToMonitor.listen([](PHLWORKSPACE, PHLMONITOR) { scheduleChanged(); }));
     g_changeListeners.emplace_back(EV.window.open.listen([](PHLWINDOW) { scheduleChanged(); }));

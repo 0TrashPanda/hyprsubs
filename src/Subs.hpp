@@ -10,6 +10,10 @@
 #include <vector>
 
 namespace Subs {
+    // a numbered workspace ID; 0 is never a valid one
+    using WORKSPACEID                       = uint32_t;
+    constexpr WORKSPACEID WORKSPACE_INVALID = 0;
+
     // id = (sub - 1) * 100 + group
     constexpr WORKSPACEID GROUP_SPAN = 100;
     constexpr int         MAX_GROUP  = 99;

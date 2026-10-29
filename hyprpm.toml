@@ -1,7 +1,10 @@
 [repository]
 name = "hyprsubs"
 authors = ["0TrashPanda"]
-commit_pins = []
+# [Hyprland commit, hyprsubs commit]: hyprpm builds that hyprsubs commit on that Hyprland
+commit_pins = [
+    ["efb50993780079460b0cbed1363e2166a2de1d9f", "c54b3b31f756f9d1b48125f85e6625d1d54f68d1"], # v0.56.2
+]
 
 [hyprsubs]
 description = "2D workspaces: groups (horizontal) with subs (vertical) and 1:1 trackpad swiping on both axes"

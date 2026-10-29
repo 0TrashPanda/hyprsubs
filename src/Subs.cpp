@@ -1,7 +1,7 @@
 #include "Subs.hpp"
 
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
@@ -12,7 +12,7 @@
 using namespace Subs;
 
 std::optional<SPos> Subs::decode(WORKSPACEID id) {
-    if (id <= 0 || id % GROUP_SPAN == 0)
+    if (id == WORKSPACE_INVALID || id % GROUP_SPAN == 0)
         return std::nullopt;
 
     return SPos{.group = sc<int>(id % GROUP_SPAN), .sub = sc<int>(id / GROUP_SPAN) + 1};
@@ -23,10 +23,11 @@ WORKSPACEID Subs::encode(int group, int sub) {
 }
 
 std::optional<SPos> Subs::posOf(const PHLWORKSPACE& ws) {
-    if (!ws || ws->m_isSpecialWorkspace || ws->inert())
+    if (!ws || ws->type() == Workspace::eWorkspaceType::SPECIAL)
         return std::nullopt;
 
-    return decode(ws->m_id);
+    const auto ID = ws->numberedID();
+    return ID ? decode(*ID) : std::nullopt;
 }
 
 CLayoutMap Subs::layout(const PHLMONITOR& mon) {
@@ -64,7 +65,7 @@ bool Subs::groupHasWindows(int group, const PHLMONITOR& mon) {
 }
 
 PHLWORKSPACE Subs::workspaceFor(int group, int sub) {
-    return State::workspaceState()->query().id(encode(group, sub)).run();
+    return State::workspaceState()->query().numbered(Workspace::SWorkspaceNumberedID{encode(group, sub)}).run();
 }
 
 int CState::lastUsedSub(int group, const CLayoutMap& map) const {
